@@ -823,7 +823,24 @@ button { cursor: pointer; }
   background: rgba(246, 241, 230, .45);
 }
 .modal-foot-actions { display: flex; gap: 10px; margin-left: auto; }
-.modal-foot-left { display: flex; align-items: center; gap: 8px; }
+.modal-foot-left { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+
+.cloud-status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--ink-3);
+}
+.cloud-status strong { font-size: 12.5px; color: var(--ink); }
+.cloud-status a { color: var(--accent); text-decoration: none; margin-top: 2px; }
+.cloud-status a:hover { text-decoration: underline; }
 .form-hint { font-size: 12px; color: var(--accent); }
 
 .type-switch {
