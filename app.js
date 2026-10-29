@@ -1009,6 +1009,9 @@ async function connectGithub() {
         );
       }
       await ghSave(uploadLocal ? state.data : { version: 1, entries: [], locations: [] });
+    } else {
+      state.data = existing;
+      writeLocalCache();
     }
 
     writeGithubConfig(cfg);
