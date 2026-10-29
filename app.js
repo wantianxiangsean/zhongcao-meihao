@@ -45,6 +45,7 @@ const ICON_PATHS = {
   bulb: '<path d="M9.5 18h5"/><path d="M10.5 21h3"/><path d="M12 3a6.2 6.2 0 00-3.6 11.3c.6.5 1 1.2 1 2v.7h5.2v-.7c0-.8.4-1.5 1-2A6.2 6.2 0 0012 3z"/>',
   person: '<circle cx="12" cy="8" r="3.6"/><path d="M5.5 20.5c0-3.7 2.9-6.2 6.5-6.2s6.5 2.5 6.5 6.2"/>',
   book: '<path d="M5 5.2A2.2 2.2 0 017.2 3H19v15.4H7.2A2.2 2.2 0 005 20.6z"/><path d="M5 20.6A2.2 2.2 0 017.2 18.4H19"/>',
+  gift: '<path d="M4 9.5h16v3.2H4z"/><path d="M5.6 12.7v7.3h12.8v-7.3"/><path d="M12 9.5v10.5"/><path d="M12 9.5C12 6.7 10.7 4.4 8.7 4.4a2.05 2.05 0 000 5.1h3.3z"/><path d="M12 9.5c0-2.8 1.3-5.1 3.3-5.1a2.05 2.05 0 010 5.1H12z"/>',
   inbox: '<path d="M4 13.5l2-8.5h12l2 8.5v4A1.5 1.5 0 0118.5 19h-13A1.5 1.5 0 014 17.5v-4z"/><path d="M4 13.5h4.2l1 2h5.6l1-2H20"/>',
   image: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15.5l-5-5-7.5 7.5"/>',
   upload: '<path d="M12 16V4.5"/><path d="M7 9.5l5-5 5 5"/><path d="M5 20h14"/>',
@@ -167,22 +168,42 @@ const TYPES = {
     dateLabel: '阅读日期',
     fields: [
       { key: 'author', label: '作者 / 译者', ph: '如：余华 / 林少华' },
-      { key: 'kind', label: '类型', type: 'select', options: ['小说', '非虚构', '散文', '诗歌', '漫画', '画册', '其他'] },
+      { key: 'kind', label: '类型', ph: '手动填写，如：小说、非虚构、散文…' },
       { key: 'quote', label: '摘抄 / 印象', type: 'textarea', ph: '想记住的句子、读完的感受…', span: true },
       { key: 'why', label: '为什么想读', type: 'textarea', ph: '从哪里知道这本书…', span: true },
       { key: 'notes', label: '备注', type: 'textarea', ph: '想推荐给谁、版本提醒…', span: true },
     ],
     cardFields: ['author', 'kind'],
   },
+  goods: {
+    label: '好物',
+    icon: 'gift',
+    place: false,
+    titleLabel: '物品名称',
+    titlePlaceholder: '物品或品牌名称',
+    checkLabel: '入手',
+    checkDone: '已入手',
+    checkHint: '入手了就勾上',
+    dateLabel: '记录日期',
+    fields: [
+      { key: 'brand', label: '品牌 / 来源', ph: '品牌、店铺或朋友推荐' },
+      { key: 'kind', label: '类别', ph: '手动填写，如：厨具、数码…' },
+      { key: 'price', label: '价格', ph: '如 ¥199' },
+      { key: 'why', label: '为什么推荐 / 使用感受', type: 'textarea', ph: '用起来怎么样、值不值得…', span: true },
+      { key: 'notes', label: '备注', type: 'textarea', ph: '购买渠道、型号、替代品…', span: true },
+    ],
+    cardFields: ['brand', 'price'],
+  },
 };
 
-const TYPE_ORDER = ['food', 'spot', 'media', 'book', 'people', 'topic'];
+const TYPE_ORDER = ['food', 'spot', 'media', 'book', 'goods', 'people', 'topic'];
 const TYPE_FILTERS = [
   { value: 'all', label: '全部' },
   { value: 'food', label: '美食' },
   { value: 'spot', label: '美景' },
   { value: 'media', label: '好剧' },
   { value: 'book', label: '好书' },
+  { value: 'goods', label: '好物' },
   { value: 'people', label: '人物' },
   { value: 'topic', label: '主题' },
 ];
@@ -271,18 +292,34 @@ function ghHeaders(extra) {
 }
 
 async function ghRequest(url, options = {}) {
-  const res = await fetch(url, options);
-  if (res.status === 401) throw new Error('Token 无效或已过期，请重新填写');
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch {
+    const err = new Error('网络连接失败，请稍后重试');
+    err.network = true;
+    throw err;
+  }
+  if (res.status === 401) {
+    throw Object.assign(new Error('Token 无效或已过期，请重新填写'), { status: 401 });
+  }
   if (res.status === 403) {
     const info = await res.clone().json().catch(() => null);
     const msg = (info && info.message) || '';
-    if (/rate limit/i.test(msg)) throw new Error('GitHub API 触发限流，请稍后再试');
-    throw new Error('Token 权限不足：需要该私有仓库的 Contents 读写权限');
+    const err = new Error(
+      /rate limit/i.test(msg)
+        ? 'GitHub API 触发限流，请稍后再试'
+        : 'Token 权限不足：需要该私有仓库的 Contents 读写权限'
+    );
+    err.status = 403;
+    throw err;
   }
   if (res.status === 404) return res;
   if (!res.ok) {
     const info = await res.json().catch(() => null);
-    throw new Error((info && info.message) || `GitHub 返回 ${res.status}`);
+    const err = new Error((info && info.message) || `GitHub 返回 ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
   return res;
 }
@@ -330,26 +367,45 @@ function parseRemoteData(text) {
   return data;
 }
 
-async function ghSave(data) {
+let ghWriteChain = Promise.resolve();
+
+function ghSave(data) {
+  const content = utf8ToBase64(JSON.stringify(data, null, 2));
+  const count = data.entries.length;
+  const task = ghWriteChain.catch(() => {}).then(() => ghSaveContent(content, count, 0));
+  ghWriteChain = task;
+  return task;
+}
+
+async function ghSaveContent(content, count, attempt) {
   const url = ghContentsUrl(GH.config.path);
-  const meta = await ghRequest(url + `?ref=${encodeURIComponent(GH.config.branch)}`, {
-    headers: ghHeaders(),
-  });
-  let sha = null;
-  if (meta.status === 200) {
-    const info = await meta.json();
-    sha = info.sha;
+  try {
+    const meta = await ghRequest(url + `?ref=${encodeURIComponent(GH.config.branch)}`, {
+      headers: ghHeaders(),
+    });
+    let sha = null;
+    if (meta.status === 200) {
+      const info = await meta.json();
+      sha = info.sha;
+    }
+    await ghRequest(url, {
+      method: 'PUT',
+      headers: ghHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        message: `更新收藏 · ${count} 条`,
+        content,
+        branch: GH.config.branch,
+        ...(sha ? { sha } : {}),
+      }),
+    });
+  } catch (err) {
+    const transient = err.network || err.status === 409 || (err.status && err.status >= 500);
+    if (attempt < 1 && transient) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      return ghSaveContent(content, count, attempt + 1);
+    }
+    throw err;
   }
-  await ghRequest(url, {
-    method: 'PUT',
-    headers: ghHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
-      message: `更新收藏 · ${data.entries.length} 条`,
-      content: utf8ToBase64(JSON.stringify(data, null, 2)),
-      branch: GH.config.branch,
-      ...(sha ? { sha } : {}),
-    }),
-  });
 }
 
 async function ghUploadImage(file) {
@@ -479,10 +535,31 @@ function entriesIn(nodeId) {
   return state.data.entries.filter((e) => ids.has(e.locationId));
 }
 
+function normalizeForSearch(value) {
+  return String(value == null ? '' : value)
+    .normalize('NFKC')
+    .toLowerCase();
+}
+
+function isSubsequence(needle, haystack) {
+  let i = 0;
+  for (let j = 0; j < haystack.length && i < needle.length; j += 1) {
+    if (haystack[j] === needle[i]) i += 1;
+  }
+  return i === needle.length;
+}
+
+function searchTokens(query) {
+  return normalizeForSearch(query)
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
 function searchText(entry) {
   const parts = [entry.title || ''];
   const type = TYPES[entry.type];
   if (type) {
+    parts.push(type.label);
     for (const def of type.fields) {
       const v = entry.fields && entry.fields[def.key];
       if (v) parts.push(String(v));
@@ -490,16 +567,55 @@ function searchText(entry) {
   }
   if (entry.fields && Array.isArray(entry.fields.tags)) parts.push(entry.fields.tags.join(' '));
   parts.push(pathNames(entry.locationId).join(' '));
-  return parts.join(' ').toLowerCase();
+  return normalizeForSearch(parts.join(' '));
 }
 
-function visibleEntries() {
+function scoreEntry(entry, tokens) {
+  if (!tokens.length) return 0;
+  const title = normalizeForSearch(entry.title);
+  const haystack = searchText(entry);
+  let score = 0;
+  for (const token of tokens) {
+    if (title === token) score += 160;
+    else if (title.startsWith(token)) score += 120;
+    else if (title.includes(token)) score += 100;
+    else if (isSubsequence(token, title)) score += 60;
+    else if (haystack.includes(token)) score += 40;
+    else if (isSubsequence(token, haystack)) score += 20;
+    else return 0;
+  }
+  return score;
+}
+
+function searchAllEntries(query) {
+  const tokens = searchTokens(query);
+  const scope = scopedEntries();
+  if (!tokens.length) {
+    return scope
+      .slice()
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      .slice(0, 10);
+  }
+  return scope
+    .map((entry) => ({ entry, score: scoreEntry(entry, tokens) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || (b.entry.updatedAt || 0) - (a.entry.updatedAt || 0))
+    .slice(0, 40)
+    .map((item) => item.entry);
+}
+
+function scopedEntries() {
   let list = entriesIn(state.view.nodeId);
   if (state.view.type !== 'all') list = list.filter((e) => e.type === state.view.type);
   if (state.view.status === 'done') list = list.filter((e) => e.checked);
   if (state.view.status === 'todo') list = list.filter((e) => !e.checked);
-  const q = state.view.q.trim().toLowerCase();
-  if (q) list = list.filter((e) => searchText(e).includes(q));
+  return list;
+}
+
+function visibleEntries() {
+  let list = scopedEntries();
+  const tokens = searchTokens(state.view.q);
+  if (tokens.length) list = list.filter((e) => scoreEntry(e, tokens) > 0);
   return list.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
@@ -581,7 +697,10 @@ async function flushSave() {
     ok = false;
     dirty = true;
     setSyncState('error');
-    toast(err.message || '数据保存失败，请确认本地服务仍在运行', 'error');
+    const message = isGithubMode()
+      ? `云端保存失败：${err.message || '网络错误'}。修改已存在本机，可点侧栏「备份」重试。`
+      : '数据保存失败，请确认本地服务仍在运行';
+    toast(message, 'error');
   } finally {
     saving = false;
     if (dirty && ok) {
@@ -891,14 +1010,14 @@ function renderExtra() {
 }
 
 function renderStats() {
-  const counts = { food: 0, spot: 0, media: 0, book: 0, people: 0, topic: 0 };
+  const counts = { food: 0, spot: 0, media: 0, book: 0, goods: 0, people: 0, topic: 0 };
   state.data.entries.forEach((e) => {
     if (counts[e.type] != null) counts[e.type] += 1;
   });
   const done = state.data.entries.filter((e) => e.checked).length;
   $('#stats').innerHTML =
     `<div>共 <strong>${state.data.entries.length}</strong> 条收藏 · 已打卡 <strong>${done}</strong></div>` +
-    `<div>${TYPES.food.label} ${counts.food} · ${TYPES.spot.label} ${counts.spot} · ${TYPES.media.label} ${counts.media} · ${TYPES.book.label} ${counts.book} · ${TYPES.people.label} ${counts.people} · ${TYPES.topic.label} ${counts.topic}</div>`;
+    `<div>${TYPES.food.label} ${counts.food} · ${TYPES.spot.label} ${counts.spot} · ${TYPES.media.label} ${counts.media} · ${TYPES.book.label} ${counts.book} · ${TYPES.goods.label} ${counts.goods} · ${TYPES.people.label} ${counts.people} · ${TYPES.topic.label} ${counts.topic}</div>`;
   $('#allCount').textContent = String(state.data.entries.length);
 }
 
@@ -1429,13 +1548,13 @@ function renderEmpty() {
     el('h3', { text: unplaced ? '还没有无地点收藏' : '这里还空着' }),
     el('p', {
       text: unplaced
-        ? '好剧、好书、想研究的主题、值得记住的人，都可以放在这里。'
+        ? '好剧、好书、好物、想研究的主题、值得记住的人，都可以放在这里。'
         : '把吃过的好菜、去过的地方记下来，慢慢长成你的地图。',
     })
   );
 
   const actions = el('div', { class: 'empty-actions' });
-  (unplaced ? ['media', 'book', 'people', 'topic'] : ['food', 'spot']).forEach((t) => {
+  (unplaced ? ['media', 'book', 'goods', 'people', 'topic'] : ['food', 'spot']).forEach((t) => {
     const b = el('button', {
       class: 'btn ' + (t === 'food' || t === 'media' ? 'primary' : 'ghost'),
       type: 'button',
@@ -1453,6 +1572,134 @@ function clearFilters() {
   state.view.q = '';
   $('#searchInput').value = '';
   renderMain();
+}
+
+/* ---------- 全局搜索 ---------- */
+function currentSearchScope() {
+  const parts = [];
+  if (state.view.nodeId !== 'all') {
+    const node = getNode(state.view.nodeId);
+    if (node) parts.push(node.name);
+  }
+  if (state.view.type !== 'all' && TYPES[state.view.type]) parts.push(TYPES[state.view.type].label);
+  if (state.view.status === 'done') parts.push('已打卡');
+  if (state.view.status === 'todo') parts.push('待打卡');
+  return parts.length ? parts.join(' · ') : '全部收藏';
+}
+
+function updateSearchScope() {
+  const scope = currentSearchScope();
+  const scopeEl = $('#searchScope');
+  if (scopeEl) scopeEl.textContent = `搜索范围：${scope}`;
+  const input = $('#paletteInput');
+  if (input) {
+    input.placeholder = scope === '全部收藏' ? '搜索全部收藏…' : `在 ${scope} 中搜索…`;
+  }
+}
+
+function openSearchPalette() {
+  updateSearchScope();
+  $('#paletteInput').value = '';
+  renderSearchResults();
+  $('#searchBackdrop').hidden = false;
+  setTimeout(() => $('#paletteInput').focus(), 20);
+}
+
+function closeSearchPalette() {
+  $('#searchBackdrop').hidden = true;
+}
+
+function renderSearchResults() {
+  const box = $('#searchResults');
+  const entries = searchAllEntries($('#paletteInput').value);
+  box.innerHTML = '';
+  if (!entries.length) {
+    box.appendChild(el('div', { class: 'search-empty', text: '没有找到匹配的收藏' }));
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const entry of entries) {
+    const type = TYPES[entry.type] || TYPES.food;
+    const row = el('button', { type: 'button', class: 'search-result' });
+    row.appendChild(el('span', { class: 'pill ' + entry.type, text: type.label }));
+    row.appendChild(el('span', { class: 'sr-title', text: entry.title }));
+    row.appendChild(
+      el('span', {
+        class: 'sr-meta',
+        text: entry.locationId ? pathNames(entry.locationId).join(' / ') : '无地点',
+      })
+    );
+    row.addEventListener('click', () => {
+      closeSearchPalette();
+      openDrawer(entry.id);
+    });
+    frag.appendChild(row);
+  }
+  box.appendChild(frag);
+}
+
+function isEditableTarget(target) {
+  if (!target) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+/* ---------- 侧栏宽度 ---------- */
+const SIDEBAR_WIDTH_KEY = 'interests.sidebarWidth';
+const SIDEBAR_MIN = 220;
+const SIDEBAR_MAX = 460;
+const SIDEBAR_DEFAULT = 278;
+
+function applySidebarWidth(width) {
+  const w = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));
+  document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+  return w;
+}
+
+function initSidebarResize() {
+  const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+  if (saved) applySidebarWidth(saved);
+
+  const handle = $('#sidebarResizer');
+  if (!handle) return;
+  let dragging = false;
+
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.body.classList.remove('resizing');
+    const width = Math.round($('.sidebar').getBoundingClientRect().width);
+    if (width) localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  };
+
+  handle.addEventListener('pointerdown', (e) => {
+    if (window.innerWidth <= 900) return;
+    dragging = true;
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add('dragging');
+    document.body.classList.add('resizing');
+    e.preventDefault();
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const left = $('.sidebar').getBoundingClientRect().left;
+    applySidebarWidth(e.clientX - left);
+  });
+  handle.addEventListener('pointerup', stop);
+  handle.addEventListener('pointercancel', stop);
+  handle.addEventListener('lostpointercapture', stop);
+  handle.addEventListener('dblclick', () => {
+    applySidebarWidth(SIDEBAR_DEFAULT);
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(SIDEBAR_DEFAULT));
+  });
+  handle.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const current = $('.sidebar').getBoundingClientRect().width;
+    const next = applySidebarWidth(current + (e.key === 'ArrowRight' ? 16 : -16));
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
+  });
 }
 
 /* ---------- 详情抽屉 ---------- */
@@ -2226,15 +2473,19 @@ async function createDailySnapshot() {
       headers: ghHeaders(),
     });
     if (existing.status !== 200) {
-      await ghRequest(url, {
-        method: 'PUT',
-        headers: ghHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          message: `备份收藏 · ${today}`,
-          content: utf8ToBase64(JSON.stringify(state.data, null, 2)),
-          branch: GH.config.branch,
-        }),
-      });
+      try {
+        await ghRequest(url, {
+          method: 'PUT',
+          headers: ghHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            message: `备份收藏 · ${today}`,
+            content: utf8ToBase64(JSON.stringify(state.data, null, 2)),
+            branch: GH.config.branch,
+          }),
+        });
+      } catch (err) {
+        if (err.status !== 422) throw err;
+      }
     }
     localStorage.setItem('interests.lastCloudBackup', today);
     await pruneCloudBackups();
@@ -2304,6 +2555,13 @@ function bindStaticIcons() {
   $('#sidebarClose').innerHTML = icon('close');
   $('#editorClose').innerHTML = icon('close');
   $('#settingsClose').innerHTML = icon('close');
+  $('#searchEntryIcon').innerHTML = icon('search');
+  $('#paletteIcon').innerHTML = icon('search');
+  $('#paletteClose').innerHTML = icon('close');
+  if (/Mac|iPhone|iPad/.test(navigator.platform)) {
+    const kbd = $('.search-entry kbd');
+    if (kbd) kbd.textContent = '⌘ K';
+  }
   $('#addBtn').innerHTML = icon('plus') + '<span>新收藏</span>';
   $('#exportBtn').innerHTML = icon('upload') + '<span>备份</span>';
   $('#importBtn').innerHTML = icon('download') + '<span>恢复</span>';
@@ -2354,6 +2612,24 @@ function bindEvents() {
   $('#editorCancel').addEventListener('click', closeEditor);
   $('#editorSave').addEventListener('click', saveEditor);
 
+  $('#searchEntry').addEventListener('click', openSearchPalette);
+  $('#paletteClose').addEventListener('click', closeSearchPalette);
+  $('#searchBackdrop').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeSearchPalette();
+  });
+  $('#paletteInput').addEventListener('input', renderSearchResults);
+  $('#paletteInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = $('#searchResults .search-result');
+      if (first) first.click();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const first = $('#searchResults .search-result');
+      if (first) first.focus();
+    }
+  });
+
   $('#drawerBackdrop').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeDrawer();
   });
@@ -2362,7 +2638,22 @@ function bindEvents() {
   $('#importBtn').addEventListener('click', restoreFromCloud);
 
   document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      if ($('#searchBackdrop').hidden) openSearchPalette();
+      else closeSearchPalette();
+      return;
+    }
+    if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey && !isEditableTarget(e.target)) {
+      e.preventDefault();
+      if ($('#searchBackdrop').hidden) openSearchPalette();
+      return;
+    }
     if (e.key !== 'Escape') return;
+    if (!$('#searchBackdrop').hidden) {
+      closeSearchPalette();
+      return;
+    }
     if (!$('#editorBackdrop').hidden) {
       closeEditor();
       return;
@@ -2398,6 +2689,7 @@ async function init() {
   GH.config = readGithubConfig();
   bindStaticIcons();
   bindEvents();
+  initSidebarResize();
   await loadData();
   renderAll();
 }
