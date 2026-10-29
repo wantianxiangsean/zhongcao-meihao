@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#f6f1e6">
 <title>种草美好</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23b2412b'/%3E%3Ctext x='32' y='45' font-size='36' text-anchor='middle' fill='%23fff6ee' font-family='serif'%3E%E7%A7%8D%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="styles.css?v=6">
+<link rel="stylesheet" href="styles.css?v=7">
 </head>
 <body>
 <div class="app">
@@ -39,8 +39,8 @@
       <div class="stats" id="stats"></div>
       <button type="button" class="storage-line" id="storageLine"></button>
       <div class="side-actions">
-        <button class="btn tiny ghost" id="exportBtn" title="导出 JSON 备份"></button>
-        <button class="btn tiny ghost" id="importBtn" title="从 JSON 备份恢复"></button>
+        <button class="btn tiny ghost" id="exportBtn" title="下载完整备份（含图片）"></button>
+        <button class="btn tiny ghost" id="importBtn" title="从备份文件恢复（含图片）"></button>
         <input type="file" id="importFile" accept="application/json,.json" hidden>
       </div>
     </footer>
@@ -115,10 +115,14 @@
         <label class="field span-2"><span class="label">细粒度 Token</span><input id="setToken" type="password" autocomplete="off" placeholder="github_pat_..."></label>
       </div>
       <p class="settings-hint">创建方式：GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token。只选这个私有仓库，权限只需 Contents: Read and write。Token 只保存在本机浏览器，不会写进公开代码。</p>
+      <p class="settings-status" id="backupInfo"></p>
       <p class="settings-status" id="settingsStatus"></p>
     </div>
     <footer class="modal-foot">
-      <button class="btn danger tiny" id="ghDisconnect" hidden>断开连接</button>
+      <div class="modal-foot-left">
+        <button class="btn tiny ghost" id="ghBackup" hidden>立即备份到云端</button>
+        <button class="btn danger tiny" id="ghDisconnect" hidden>断开连接</button>
+      </div>
       <div class="modal-foot-actions">
         <button class="btn ghost" id="ghCancel">取消</button>
         <button class="btn primary" id="ghConnect">测试并连接</button>
@@ -129,6 +133,6 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
