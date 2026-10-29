@@ -539,6 +539,7 @@ function save() {
 function setSyncState(next) {
   syncState = next;
   renderStorage();
+  renderCloudStatus();
 }
 
 async function storeRead() {
@@ -681,6 +682,7 @@ function renderAll(options = {}) {
   renderMain(options.animate !== false);
   renderStats();
   renderStorage();
+  renderCloudStatus();
 }
 
 function renderTree() {
@@ -926,14 +928,11 @@ function openSettings() {
   $('#setToken').value = cfg.token || '';
   $('#settingsStatus').textContent = '';
   $('#settingsStatus').className = 'settings-status';
-  $('#ghDisconnect').hidden = !isGithubMode();
-  $('#ghBackup').hidden = !isGithubMode();
-  const lastBackup = localStorage.getItem('interests.lastCloudBackup');
-  $('#backupInfo').textContent = isGithubMode()
-    ? lastBackup
-      ? `最近云端备份：${lastBackup}`
-      : '还没有云端备份'
-    : '';
+  const connected = isGithubMode();
+  $('#ghDisconnect').hidden = !connected;
+  $('#ghBackup').hidden = !connected;
+  $('#ghRestore').hidden = !connected;
+  renderCloudStatus();
   $('#settingsBackdrop').hidden = false;
   sessionStorage.setItem('interests.settingsSeen', '1');
   setTimeout(() => {
@@ -1048,13 +1047,68 @@ async function runManualCloudBackup() {
     await cloudBackup({ manual: true });
     status.className = 'settings-status ok';
     status.textContent = '已备份到私有仓库 backups/';
-    $('#backupInfo').textContent = `最近云端备份：${dateStamp()}`;
+    renderCloudStatus();
   } catch (err) {
     status.className = 'settings-status error';
     status.textContent = err.message || '备份失败';
   } finally {
     btn.disabled = false;
   }
+}
+
+async function restoreFromCloud() {
+  if (!isGithubMode()) return;
+  if (!window.confirm('云端版本会覆盖当前浏览器里的收藏（不会删除云端数据）。继续吗？')) return;
+  const status = $('#settingsStatus');
+  status.className = 'settings-status';
+  status.textContent = '正在读取云端数据…';
+  try {
+    const data = await ghLoad();
+    if (!data) throw new Error('云端还没有数据文件');
+    state.data = data;
+    state.view = { nodeId: 'all', type: 'all', status: 'all', q: '' };
+    $('#searchInput').value = '';
+    syncState = 'saved';
+    renderAll();
+    closeSettings();
+    toast('已从云端恢复');
+  } catch (err) {
+    status.className = 'settings-status error';
+    status.textContent = err.message || '恢复失败';
+  }
+}
+
+function renderCloudStatus() {
+  const box = $('#cloudStatus');
+  if (!box) return;
+  if (!isGithubMode()) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = '';
+
+  const headline =
+    syncState === 'saving'
+      ? '正在自动备份…'
+      : syncState === 'error'
+      ? '自动备份遇到问题'
+      : '自动备份已开启';
+  const last = localStorage.getItem('interests.lastCloudBackup');
+  const detail = `修改会自动写入私有仓库；每日首次修改另存一份 backups/ 快照${
+    last ? `，最近 ${last}` : ''
+  }。`;
+
+  box.appendChild(el('strong', { text: headline }));
+  box.appendChild(el('span', { text: detail }));
+  const link = el('a', {
+    href: `https://github.com/${GH.config.owner}/${GH.config.repo}/tree/${GH.config.branch}/backups`,
+    target: '_blank',
+    rel: 'noopener',
+    text: '查看云端快照',
+  });
+  box.appendChild(link);
 }
 
 /* ---------- 渲染：主内容 ---------- */
@@ -2178,6 +2232,139 @@ function blobToDataUrl(blob) {
   });
 }
 
+/* ---------- ZIP（写入用 store，读取兼容 deflate） ---------- */
+const ZIP_CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let c = i;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) {
+    c = ZIP_CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function zipDateTime(d = new Date()) {
+  const time = ((d.getHours() & 0x1f) << 11) | ((d.getMinutes() & 0x3f) << 5) | ((d.getSeconds() >> 1) & 0x1f);
+  const date =
+    (((d.getFullYear() - 1980) & 0x7f) << 9) | (((d.getMonth() + 1) & 0x0f) << 5) | (d.getDate() & 0x1f);
+  return { time, date };
+}
+
+function makeZip(entries) {
+  const encoder = new TextEncoder();
+  const parts = [];
+  const central = [];
+  const stamp = zipDateTime();
+  let offset = 0;
+
+  for (const entry of entries) {
+    const nameBytes = encoder.encode(entry.name);
+    const data = entry.data;
+    const crc = crc32(data);
+
+    const local = new Uint8Array(30);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true);
+    lv.setUint16(4, 20, true);
+    lv.setUint16(6, 0x0800, true);
+    lv.setUint16(8, 0, true);
+    lv.setUint16(10, stamp.time, true);
+    lv.setUint16(12, stamp.date, true);
+    lv.setUint32(14, crc, true);
+    lv.setUint32(18, data.length, true);
+    lv.setUint32(22, data.length, true);
+    lv.setUint16(26, nameBytes.length, true);
+    lv.setUint16(28, 0, true);
+
+    const cen = new Uint8Array(46);
+    const cv = new DataView(cen.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0x0800, true);
+    cv.setUint16(10, 0, true);
+    cv.setUint16(12, stamp.time, true);
+    cv.setUint16(14, stamp.date, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, data.length, true);
+    cv.setUint32(24, data.length, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint32(42, offset, true);
+
+    parts.push(local, nameBytes, data);
+    central.push(cen, nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+
+  let centralSize = 0;
+  for (const part of central) centralSize += part.length;
+
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, entries.length, true);
+  ev.setUint16(10, entries.length, true);
+  ev.setUint32(12, centralSize, true);
+  ev.setUint32(16, offset, true);
+
+  return new Blob([...parts, ...central, end], { type: 'application/zip' });
+}
+
+async function readZip(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 0xffff); i -= 1) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error('不是有效的 ZIP 文件');
+
+  const count = view.getUint16(eocd + 10, true);
+  let pointer = view.getUint32(eocd + 16, true);
+  const decoder = new TextDecoder();
+  const files = new Map();
+
+  for (let i = 0; i < count; i += 1) {
+    if (view.getUint32(pointer, true) !== 0x02014b50) throw new Error('ZIP 文件结构损坏');
+    const method = view.getUint16(pointer + 10, true);
+    const compressedSize = view.getUint32(pointer + 20, true);
+    const nameLength = view.getUint16(pointer + 28, true);
+    const extraLength = view.getUint16(pointer + 30, true);
+    const commentLength = view.getUint16(pointer + 32, true);
+    const localOffset = view.getUint32(pointer + 42, true);
+    const name = decoder.decode(bytes.subarray(pointer + 46, pointer + 46 + nameLength));
+
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const raw = bytes.subarray(dataStart, dataStart + compressedSize);
+
+    let data;
+    if (method === 0) {
+      data = raw.slice();
+    } else if (method === 8) {
+      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      data = new Uint8Array(await new Response(stream).arrayBuffer());
+    } else {
+      throw new Error('ZIP 使用了不支持的压缩方式');
+    }
+    files.set(name, data);
+    pointer += 46 + nameLength + extraLength + commentLength;
+  }
+  return files;
+}
+
 async function imageToDataUrl(src) {
   if (!src) return null;
   if (src.startsWith('data:')) return src;
@@ -2191,25 +2378,42 @@ async function imageToDataUrl(src) {
   return blobToDataUrl(await res.blob());
 }
 
-async function buildBackupData() {
+async function buildBackupArchive() {
   const entries = JSON.parse(JSON.stringify(state.data.entries));
+  const zipEntries = [];
+  let imageCount = 0;
+
   for (const entry of entries) {
     const image = entry.fields && entry.fields.image;
     if (!image) continue;
     try {
       const dataUrl = await imageToDataUrl(image);
-      if (dataUrl) entry.fields.image = dataUrl;
+      const match = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/i.exec(dataUrl || '');
+      if (!match) throw new Error('无法转换图片');
+      const ext = match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
+      const path = `images/${entry.id}.${ext}`;
+      zipEntries.push({ name: path, data: base64ToBytes(match[2]) });
+      entry.fields.image = path;
+      imageCount += 1;
     } catch (err) {
       console.warn('备份图片失败', entry.title, err);
+      entry.fields.image = '';
     }
   }
-  return {
+
+  const payload = {
     version: 1,
     kind: 'zhongcao-meihao-backup',
     exportedAt: new Date().toISOString(),
     entries,
     locations: JSON.parse(JSON.stringify(state.data.locations)),
   };
+  zipEntries.unshift({
+    name: 'data.json',
+    data: new TextEncoder().encode(JSON.stringify(payload, null, 2)),
+  });
+
+  return { blob: makeZip(zipEntries), imageCount };
 }
 
 async function exportBackup() {
@@ -2218,15 +2422,9 @@ async function exportBackup() {
   btn.disabled = true;
   try {
     btn.innerHTML = icon('download') + '<span>打包中…</span>';
-    const backup = await buildBackupData();
-    const imageCount = backup.entries.filter(
-      (e) => e.fields && typeof e.fields.image === 'string' && e.fields.image.startsWith('data:')
-    ).length;
-    downloadBlob(
-      new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }),
-      `种草美好完整备份-${timeStamp()}.json`
-    );
-    toast(imageCount ? `备份已下载（含 ${imageCount} 张图片）` : '备份已下载');
+    const { blob, imageCount } = await buildBackupArchive();
+    downloadBlob(blob, `种草美好完整备份-${timeStamp()}.zip`);
+    toast(imageCount ? `完整备份已下载（含 ${imageCount} 张图片）` : '完整备份已下载');
   } catch (err) {
     toast('备份失败：' + (err.message || '未知错误'), 'error');
   } finally {
@@ -2237,29 +2435,62 @@ async function exportBackup() {
 
 async function importBackup(file) {
   try {
-    const text = await file.text();
-    const data = JSON.parse(text);
+    const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    const isZip = /\.zip$/i.test(file.name) || (head[0] === 0x50 && head[1] === 0x4b);
+    let data;
+    let zipMap = null;
+
+    if (isZip) {
+      zipMap = await readZip(await file.arrayBuffer());
+      const manifest = zipMap.get('data.json');
+      if (!manifest) throw new Error('备份包里缺少 data.json');
+      data = JSON.parse(new TextDecoder().decode(manifest));
+    } else {
+      data = JSON.parse(await file.text());
+    }
+
     if (!data || !Array.isArray(data.entries) || !Array.isArray(data.locations)) {
       throw new Error('文件格式不正确');
     }
-    const imageCount = data.entries.filter(
-      (e) => e.fields && typeof e.fields.image === 'string' && e.fields.image.startsWith('data:')
-    ).length;
+
+    const entries = JSON.parse(JSON.stringify(data.entries));
+    const imageCount = entries.filter((e) => e.fields && e.fields.image).length;
     const ok = window.confirm(
-      `将恢复 ${data.entries.length} 条收藏、${data.locations.length} 个地点${
+      `将恢复 ${entries.length} 条收藏、${data.locations.length} 个地点${
         imageCount ? `、${imageCount} 张图片` : ''
       }，并覆盖当前数据。\n建议先备份当前数据。继续吗？`
     );
     if (!ok) return;
 
-    const entries = JSON.parse(JSON.stringify(data.entries));
+    toast('正在恢复备份…');
     let uploaded = 0;
     for (const entry of entries) {
       if (!entry.fields) entry.fields = {};
       const image = entry.fields.image;
-      if (typeof image !== 'string' || !image.startsWith('data:')) continue;
+      if (!image) continue;
       try {
-        const blob = await (await fetch(image)).blob();
+        let blob = null;
+        if (zipMap && zipMap.has(image)) {
+          const bytes = zipMap.get(image);
+          const ext = String(image).split('.').pop().toLowerCase();
+          const type =
+            ext === 'png'
+              ? 'image/png'
+              : ext === 'webp'
+              ? 'image/webp'
+              : ext === 'gif'
+              ? 'image/gif'
+              : 'image/jpeg';
+          blob = new Blob([bytes], { type });
+        } else if (typeof image === 'string' && image.startsWith('data:')) {
+          blob = await (await fetch(image)).blob();
+        } else if (zipMap) {
+          console.warn('备份缺少图片', image);
+          entry.fields.image = '';
+          continue;
+        } else {
+          continue;
+        }
         const ext = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
         const restored = new File([blob], `restore.${ext}`, { type: blob.type || 'image/jpeg' });
         entry.fields.image = await uploadImage(restored);
@@ -2354,6 +2585,7 @@ function bindEvents() {
   $('#ghConnect').addEventListener('click', connectGithub);
   $('#ghDisconnect').addEventListener('click', disconnectGithub);
   $('#ghBackup').addEventListener('click', runManualCloudBackup);
+  $('#ghRestore').addEventListener('click', restoreFromCloud);
 
   $('#editorClose').addEventListener('click', closeEditor);
   $('#editorCancel').addEventListener('click', closeEditor);
