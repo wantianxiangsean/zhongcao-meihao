@@ -1,0 +1,2218 @@
+/* =========================================================
+   种草美好 · 美食与远方
+   纯前端 + 本地 Node 存储（data/data.json、data/images）
+   ========================================================= */
+
+/* ---------- 小工具 ---------- */
+const $ = (sel, root = document) => root.querySelector(sel);
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+function el(tag, attrs = {}, children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value == null || value === false) continue;
+    if (key === 'class') node.className = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key === 'html') node.innerHTML = value;
+    else if (key === 'dataset') Object.assign(node.dataset, value);
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else node.setAttribute(key, value === true ? '' : value);
+  }
+  if (children != null) {
+    (Array.isArray(children) ? children : [children]).forEach((child) => {
+      if (child == null) return;
+      node.append(child.nodeType ? child : document.createTextNode(String(child)));
+    });
+  }
+  return node;
+}
+
+/* ---------- 图标 ---------- */
+const ICON_PATHS = {
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  chevron: '<path d="M9 5.5l6.5 6.5L9 18.5"/>',
+  check: '<path d="M4.5 12.5l5 5L19.5 6.5"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M14.5 5.5l4 4"/>',
+  trash: '<path d="M4 7h16"/><path d="M9 7V4.8h6V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v5.5M14 11v5.5"/>',
+  pin: '<path d="M12 21s6-5.1 6-10a6 6 0 10-12 0c0 4.9 6 10 6 10z"/><circle cx="12" cy="11" r="2.2"/>',
+  tag: '<path d="M4 4h7l9 9-7 7-9-9V4z"/><circle cx="8.5" cy="8.5" r="1.3"/>',
+  bowl: '<path d="M3.5 11.5h17a8.5 8.5 0 01-17 0z"/><path d="M8.5 11.5c0-4 1-5.5 1-5.5M13 11.5c0-4.8.8-7 .8-7M17 11.5c0-3 .8-4.2.8-4.2"/><path d="M3 20.5h18"/>',
+  mountain: '<path d="M2.5 20l6.5-12 4.2 7.3 2-3.1 6.3 7.8z"/><path d="M7.6 10.4l1.4-2.4 1.5 2.6"/>',
+  film: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14M16 5v14"/><path d="M3 9.5h5M3 14.5h5M16 9.5h5M16 14.5h5"/>',
+  bulb: '<path d="M9.5 18h5"/><path d="M10.5 21h3"/><path d="M12 3a6.2 6.2 0 00-3.6 11.3c.6.5 1 1.2 1 2v.7h5.2v-.7c0-.8.4-1.5 1-2A6.2 6.2 0 0012 3z"/>',
+  person: '<circle cx="12" cy="8" r="3.6"/><path d="M5.5 20.5c0-3.7 2.9-6.2 6.5-6.2s6.5 2.5 6.5 6.2"/>',
+  book: '<path d="M5 5.2A2.2 2.2 0 017.2 3H19v15.4H7.2A2.2 2.2 0 005 20.6z"/><path d="M5 20.6A2.2 2.2 0 017.2 18.4H19"/>',
+  inbox: '<path d="M4 13.5l2-8.5h12l2 8.5v4A1.5 1.5 0 0118.5 19h-13A1.5 1.5 0 014 17.5v-4z"/><path d="M4 13.5h4.2l1 2h5.6l1-2H20"/>',
+  image: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15.5l-5-5-7.5 7.5"/>',
+  upload: '<path d="M12 16V4.5"/><path d="M7 9.5l5-5 5 5"/><path d="M5 20h14"/>',
+  download: '<path d="M12 4.5V16"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  star: 'M12 3.6l2.5 5.2 5.7.8-4.1 4 1 5.7-5.1-2.7-5.1 2.7 1-5.7-4.1-4 5.7-.8z',
+};
+
+function icon(name) {
+  return `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name] || ''}</svg>`;
+}
+
+/* ---------- 类型定义 ---------- */
+const TYPES = {
+  food: {
+    label: '美食',
+    icon: 'bowl',
+    place: true,
+    titleLabel: '名称',
+    titlePlaceholder: '菜品或店铺名称',
+    checkLabel: '打卡',
+    checkDone: '已打卡',
+    checkHint: '去过就勾上',
+    dateLabel: '到访日期',
+    fields: [
+      { key: 'restaurant', label: '餐馆名称', ph: '如：巷口老王牛肉面', span: true },
+      { key: 'price', label: '价位', ph: '如 ¥80/人' },
+      { key: 'address', label: '地点 / 地址', ph: '街道、商场、楼层' },
+      { key: 'mustOrder', label: '必点推荐', ph: '值得再点一次的菜', span: true },
+      { key: 'notes', label: '备注', type: 'textarea', ph: '口味、排队、小贴士…', span: true },
+    ],
+    cardFields: ['restaurant', 'price'],
+  },
+  spot: {
+    label: '美景',
+    icon: 'mountain',
+    place: true,
+    titleLabel: '美景名称',
+    titlePlaceholder: '地方、景区或路线名',
+    checkLabel: '打卡',
+    checkDone: '已打卡',
+    checkHint: '去过就勾上',
+    dateLabel: '到访日期',
+    fields: [
+      { key: 'spotAddress', label: '打卡地点', ph: '景区入口 / 观景台 / 具体位置', span: true },
+      { key: 'story', label: '故事 / 印象', type: 'textarea', ph: '为什么值得来，当时发生了什么…', span: true },
+      { key: 'stay', label: '住宿', ph: '住哪里、体验如何' },
+      { key: 'food', label: '饮食', ph: '附近好吃的' },
+      { key: 'fun', label: '好玩的', type: 'textarea', ph: '项目、路线、最佳时段…', span: true },
+      { key: 'notes', label: '备注', type: 'textarea', ph: '交通、门票、提醒…', span: true },
+    ],
+    cardFields: ['spotAddress'],
+  },
+  media: {
+    label: '好剧',
+    icon: 'film',
+    place: false,
+    titleLabel: '片名 / 剧名',
+    titlePlaceholder: '电视剧、纪录片、电影…',
+    checkLabel: '看过',
+    checkDone: '已看过',
+    checkHint: '看完就勾上',
+    dateLabel: '观看日期',
+    fields: [
+      { key: 'kind', label: '类型', type: 'select', options: ['电影', '电视剧', '纪录片', '综艺', '动画', '其他'] },
+      { key: 'year', label: '年份', ph: '如 2024' },
+      { key: 'where', label: '在哪看', ph: '平台 / 影院 / 资源', span: true },
+      { key: 'story', label: '简介 / 印象', type: 'textarea', ph: '它讲了什么，为什么推荐…', span: true },
+      { key: 'notes', label: '备注', type: 'textarea', ph: '想看的理由、想重看的段落…', span: true },
+    ],
+    cardFields: ['kind', 'year', 'where'],
+  },
+  topic: {
+    label: '主题',
+    icon: 'bulb',
+    place: false,
+    titleLabel: '主题',
+    titlePlaceholder: '想研究、想弄明白的事',
+    checkLabel: '完成',
+    checkDone: '已完成',
+    checkHint: '研究告一段落就勾上',
+    dateLabel: '记录日期',
+    fields: [
+      { key: 'field', label: '所属领域', ph: '如：城市史、海洋生物' },
+      { key: 'progress', label: '进度 / 状态', ph: '如：刚起步、资料收集中' },
+      { key: 'why', label: '为什么想研究', type: 'textarea', ph: '好奇心从哪里来…', span: true },
+      { key: 'sources', label: '资料 / 线索', type: 'textarea', ph: '书、论文、纪录片、网站…', span: true },
+      { key: 'notes', label: '想法 / 备注', type: 'textarea', ph: '想弄明白的问题…', span: true },
+    ],
+    cardFields: ['field', 'progress'],
+  },
+  people: {
+    label: '人物',
+    icon: 'person',
+    place: false,
+    titleLabel: '人物名称',
+    titlePlaceholder: '名字或称呼',
+    checkLabel: '了解',
+    checkDone: '已了解',
+    checkHint: '了解过就勾上',
+    dateLabel: '记录日期',
+    fields: [
+      { key: 'role', label: '身份 / 领域', ph: '如：作家、导演、运动员' },
+      { key: 'relation', label: '如何知道', ph: '通过作品、朋友推荐…' },
+      { key: 'works', label: '作品 / 事迹', type: 'textarea', ph: '代表作、印象深的事…', span: true },
+      { key: 'why', label: '为什么想记住', type: 'textarea', ph: '哪一点打动了你…', span: true },
+      { key: 'notes', label: '备注', type: 'textarea', ph: '想说的话、相关链接…', span: true },
+    ],
+    cardFields: ['role', 'relation'],
+  },
+  book: {
+    label: '好书',
+    icon: 'book',
+    place: false,
+    titleLabel: '书名',
+    titlePlaceholder: '书名 / 作者',
+    checkLabel: '读完',
+    checkDone: '已读完',
+    checkHint: '读完就勾上',
+    dateLabel: '阅读日期',
+    fields: [
+      { key: 'author', label: '作者 / 译者', ph: '如：余华 / 林少华' },
+      { key: 'kind', label: '类型', type: 'select', options: ['小说', '非虚构', '散文', '诗歌', '漫画', '画册', '其他'] },
+      { key: 'quote', label: '摘抄 / 印象', type: 'textarea', ph: '想记住的句子、读完的感受…', span: true },
+      { key: 'why', label: '为什么想读', type: 'textarea', ph: '从哪里知道这本书…', span: true },
+      { key: 'notes', label: '备注', type: 'textarea', ph: '想推荐给谁、版本提醒…', span: true },
+    ],
+    cardFields: ['author', 'kind'],
+  },
+};
+
+const TYPE_ORDER = ['food', 'spot', 'media', 'book', 'people', 'topic'];
+const TYPE_FILTERS = [
+  { value: 'all', label: '全部' },
+  { value: 'food', label: '美食' },
+  { value: 'spot', label: '美景' },
+  { value: 'media', label: '好剧' },
+  { value: 'book', label: '好书' },
+  { value: 'people', label: '人物' },
+  { value: 'topic', label: '主题' },
+];
+const STATUS_FILTERS = [
+  { value: 'all', label: '全部' },
+  { value: 'todo', label: '待打卡' },
+  { value: 'done', label: '已打卡' },
+];
+
+const REGIONS = [
+  { id: 'cn', name: '中国' },
+  { id: 'asia', name: '亚洲' },
+  { id: 'europe', name: '欧洲' },
+  { id: 'namerica', name: '北美洲' },
+  { id: 'samerica', name: '南美洲' },
+  { id: 'africa', name: '非洲' },
+  { id: 'oceania', name: '大洋洲' },
+];
+const REGION_IDS = new Set(REGIONS.map((r) => r.id));
+const UNPLACED = { id: 'unplaced', name: '无地点收藏', level: 'extra', parentId: null, fixed: true };
+
+const STAR_PATH = ICON_PATHS.star;
+
+/* ---------- 状态 ---------- */
+const state = {
+  data: { version: 1, entries: [], locations: [] },
+  view: { nodeId: 'all', type: 'all', status: 'all', q: '' },
+  open: new Set(),
+};
+
+/* ---------- GitHub 私有数据仓库 ---------- */
+const GH_CONFIG_KEY = 'interests.github';
+const GH_IMAGE_PREFIX = 'gh:';
+const GH = { config: null, imageCache: new Map() };
+
+function readGithubConfig() {
+  try {
+    const raw = localStorage.getItem(GH_CONFIG_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw);
+    if (!c || !c.owner || !c.repo || !c.token) return null;
+    return {
+      owner: String(c.owner),
+      repo: String(c.repo),
+      branch: c.branch || 'main',
+      path: c.path || 'data/data.json',
+      token: String(c.token),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeGithubConfig(cfg) {
+  if (cfg) localStorage.setItem(GH_CONFIG_KEY, JSON.stringify(cfg));
+  else localStorage.removeItem(GH_CONFIG_KEY);
+}
+
+function isGithubMode() {
+  return !!(GH.config && GH.config.owner && GH.config.repo && GH.config.token);
+}
+
+function isLocalHost() {
+  const host = location.hostname;
+  return host === 'localhost' || host === '127.0.0.1' || host === '';
+}
+
+function ghContentsUrl(path) {
+  const encoded = String(path)
+    .split('/')
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join('/');
+  return `https://api.github.com/repos/${encodeURIComponent(GH.config.owner)}/${encodeURIComponent(
+    GH.config.repo
+  )}/contents/${encoded}`;
+}
+
+function ghHeaders(extra) {
+  return {
+    Authorization: `Bearer ${GH.config.token}`,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    ...(extra || {}),
+  };
+}
+
+async function ghRequest(url, options = {}) {
+  const res = await fetch(url, options);
+  if (res.status === 401) throw new Error('Token 无效或已过期，请重新填写');
+  if (res.status === 403) {
+    const info = await res.clone().json().catch(() => null);
+    const msg = (info && info.message) || '';
+    if (/rate limit/i.test(msg)) throw new Error('GitHub API 触发限流，请稍后再试');
+    throw new Error('Token 权限不足：需要该私有仓库的 Contents 读写权限');
+  }
+  if (res.status === 404) return res;
+  if (!res.ok) {
+    const info = await res.json().catch(() => null);
+    throw new Error((info && info.message) || `GitHub 返回 ${res.status}`);
+  }
+  return res;
+}
+
+function utf8ToBase64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(b64) {
+  const bin = atob(String(b64).replace(/\s/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function base64ToUtf8(b64) {
+  return new TextDecoder().decode(base64ToBytes(b64));
+}
+
+async function ghLoad() {
+  const url = ghContentsUrl(GH.config.path) + `?ref=${encodeURIComponent(GH.config.branch)}`;
+  const res = await ghRequest(url, { headers: ghHeaders() });
+  if (res.status === 404) return null;
+  const info = await res.json();
+  if (info.content && info.encoding === 'base64') {
+    const text = base64ToUtf8(info.content);
+    return parseRemoteData(text);
+  }
+  const raw = await ghRequest(url, { headers: ghHeaders({ Accept: 'application/vnd.github.raw' }) });
+  return parseRemoteData(await raw.text());
+}
+
+function parseRemoteData(text) {
+  if (!text || !text.trim()) return { version: 1, entries: [], locations: [] };
+  const data = JSON.parse(text);
+  if (!data || !Array.isArray(data.entries) || !Array.isArray(data.locations)) {
+    throw new Error('私有仓库里的数据文件格式不正确');
+  }
+  return data;
+}
+
+async function ghSave(data) {
+  const url = ghContentsUrl(GH.config.path);
+  const meta = await ghRequest(url + `?ref=${encodeURIComponent(GH.config.branch)}`, {
+    headers: ghHeaders(),
+  });
+  let sha = null;
+  if (meta.status === 200) {
+    const info = await meta.json();
+    sha = info.sha;
+  }
+  await ghRequest(url, {
+    method: 'PUT',
+    headers: ghHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      message: `更新收藏 · ${data.entries.length} 条`,
+      content: utf8ToBase64(JSON.stringify(data, null, 2)),
+      branch: GH.config.branch,
+      ...(sha ? { sha } : {}),
+    }),
+  });
+}
+
+async function ghUploadImage(file) {
+  const dataUrl = await compressImage(file);
+  const match = /^data:image\/(png|jpeg|webp|gif);base64,(.+)$/.exec(dataUrl);
+  if (!match) throw new Error('图片格式不支持');
+  const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+  const path = `images/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  await ghRequest(ghContentsUrl(path), {
+    method: 'PUT',
+    headers: ghHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ message: '添加图片', content: match[2], branch: GH.config.branch }),
+  });
+  return GH_IMAGE_PREFIX + path;
+}
+
+function isGhImage(src) {
+  return typeof src === 'string' && src.startsWith(GH_IMAGE_PREFIX);
+}
+
+async function ghImageUrl(path) {
+  if (GH.imageCache.has(path)) return GH.imageCache.get(path);
+  const promise = (async () => {
+    const res = await ghRequest(
+      ghContentsUrl(path) + `?ref=${encodeURIComponent(GH.config.branch)}`,
+      { headers: ghHeaders() }
+    );
+    if (res.status === 404) throw new Error('图片不存在');
+    const info = await res.json();
+    if (!info.content || info.encoding !== 'base64') throw new Error('图片过大，无法读取');
+    const ext = path.split('.').pop().toLowerCase();
+    const mime =
+      ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : 'image/jpeg';
+    return URL.createObjectURL(new Blob([base64ToBytes(info.content)], { type: mime }));
+  })();
+  GH.imageCache.set(path, promise);
+  promise.catch(() => GH.imageCache.delete(path));
+  return promise;
+}
+
+function applyImage(img, src, onError) {
+  if (!src) return;
+  if (isGhImage(src)) {
+    ghImageUrl(src.slice(GH_IMAGE_PREFIX.length))
+      .then((url) => {
+        img.src = url;
+      })
+      .catch((err) => {
+        if (onError) onError(err);
+        else img.remove();
+      });
+  } else {
+    img.src = src;
+  }
+}
+
+let treeEdit = null; // { mode:'add', parentId } | { mode:'rename', id }
+let draft = null;
+let searchTimer = null;
+let toastTimer = null;
+
+/* ---------- 数据访问 ---------- */
+function getNode(id) {
+  if (!id) return null;
+  if (id === 'all') return { id: 'all', name: '全部收藏', level: 'root', parentId: null, fixed: true };
+  if (id === 'unplaced') return UNPLACED;
+  const region = REGIONS.find((r) => r.id === id);
+  if (region) return { ...region, level: 'region', parentId: null, fixed: true };
+  return state.data.locations.find((l) => l.id === id) || null;
+}
+
+function entryById(id) {
+  return state.data.entries.find((e) => e.id === id) || null;
+}
+
+function childrenOf(parentId) {
+  return state.data.locations
+    .filter((l) => l.parentId === parentId)
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+}
+
+function childLevel(parentId) {
+  if (parentId === 'cn') return 'province';
+  if (REGION_IDS.has(parentId)) return 'country';
+  const node = getNode(parentId);
+  if (node && (node.level === 'province' || node.level === 'country')) return 'city';
+  return null;
+}
+
+function levelName(level) {
+  return { province: '省份', country: '国家', city: '城市' }[level] || '';
+}
+
+function pathOf(id) {
+  const out = [];
+  let cur = getNode(id);
+  let guard = 0;
+  while (cur && guard++ < 12) {
+    out.unshift(cur);
+    cur = cur.parentId ? getNode(cur.parentId) : null;
+  }
+  return out;
+}
+
+function pathNames(id) {
+  return pathOf(id).map((n) => n.name);
+}
+
+function subtreeIds(id) {
+  const set = new Set([id]);
+  const walk = (parent) => {
+    for (const l of state.data.locations) {
+      if (l.parentId === parent) {
+        set.add(l.id);
+        walk(l.id);
+      }
+    }
+  };
+  walk(id);
+  return set;
+}
+
+function entriesIn(nodeId) {
+  if (nodeId === 'all') return state.data.entries;
+  if (nodeId === 'unplaced') return state.data.entries.filter((e) => !e.locationId);
+  const ids = subtreeIds(nodeId);
+  return state.data.entries.filter((e) => ids.has(e.locationId));
+}
+
+function searchText(entry) {
+  const parts = [entry.title || ''];
+  const type = TYPES[entry.type];
+  if (type) {
+    for (const def of type.fields) {
+      const v = entry.fields && entry.fields[def.key];
+      if (v) parts.push(String(v));
+    }
+  }
+  if (entry.fields && Array.isArray(entry.fields.tags)) parts.push(entry.fields.tags.join(' '));
+  parts.push(pathNames(entry.locationId).join(' '));
+  return parts.join(' ').toLowerCase();
+}
+
+function visibleEntries() {
+  let list = entriesIn(state.view.nodeId);
+  if (state.view.type !== 'all') list = list.filter((e) => e.type === state.view.type);
+  if (state.view.status === 'done') list = list.filter((e) => e.checked);
+  if (state.view.status === 'todo') list = list.filter((e) => !e.checked);
+  const q = state.view.q.trim().toLowerCase();
+  if (q) list = list.filter((e) => searchText(e).includes(q));
+  return list.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+/* ---------- 时间 ---------- */
+function formatDate(value) {
+  return value ? String(value).replaceAll('-', '.') : '';
+}
+function formatTs(ts) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+}
+function todayInput() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/* ---------- 持久化 ---------- */
+let saveTimer = null;
+let dirty = false;
+let saving = false;
+let syncState = 'idle';
+
+function save() {
+  dirty = true;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, isGithubMode() ? 900 : 200);
+}
+
+function setSyncState(next) {
+  syncState = next;
+  renderStorage();
+}
+
+async function storeRead() {
+  if (isGithubMode()) {
+    const data = await ghLoad();
+    return data || { version: 1, entries: [], locations: [] };
+  }
+  const res = await fetch('/api/data');
+  if (!res.ok) throw new Error('local-unavailable');
+  const data = await res.json();
+  return {
+    version: 1,
+    entries: Array.isArray(data.entries) ? data.entries : [],
+    locations: Array.isArray(data.locations) ? data.locations : [],
+  };
+}
+
+async function storeWrite(data) {
+  if (isGithubMode()) return ghSave(data);
+  const res = await fetch('/api/data', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('保存失败');
+}
+
+async function flushSave() {
+  if (!dirty) return;
+  if (saving) return;
+  dirty = false;
+  saving = true;
+  setSyncState('saving');
+  let ok = true;
+  try {
+    await storeWrite(state.data);
+    setSyncState('saved');
+  } catch (err) {
+    ok = false;
+    dirty = true;
+    setSyncState('error');
+    toast(err.message || '数据保存失败，请确认本地服务仍在运行', 'error');
+  } finally {
+    saving = false;
+    if (dirty && ok) {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(flushSave, 400);
+    }
+  }
+}
+
+async function loadData() {
+  try {
+    state.data = await storeRead();
+  } catch (err) {
+    state.data = { version: 1, entries: [], locations: [] };
+    if (isGithubMode()) {
+      toast('读取私有仓库失败：' + (err.message || '未知错误'), 'error');
+    } else if (isLocalHost()) {
+      toast('读取数据失败，请用 start.bat 启动服务后再打开页面', 'error');
+    } else if (!sessionStorage.getItem('interests.settingsSeen')) {
+      setTimeout(() => {
+        if (!isGithubMode()) openSettings();
+      }, 500);
+    }
+  }
+
+  const saved = localStorage.getItem('interests.open');
+  if (saved) {
+    try {
+      state.open = new Set(JSON.parse(saved));
+    } catch {
+      state.open = new Set();
+    }
+  } else {
+    for (const r of REGIONS) {
+      if (entriesIn(r.id).length) state.open.add(r.id);
+    }
+    if (!state.open.size) state.open.add('cn');
+  }
+}
+
+function persistOpen() {
+  localStorage.setItem('interests.open', JSON.stringify([...state.open]));
+}
+
+/* ---------- 地点操作 ---------- */
+function addLocation(name, parentId) {
+  const level = childLevel(parentId);
+  const clean = (name || '').trim();
+  if (!level || !clean) return null;
+  const existing = state.data.locations.find((l) => l.parentId === parentId && l.name === clean);
+  if (existing) return existing;
+  const node = { id: 'loc-' + uid(), name: clean, parentId, level, createdAt: Date.now() };
+  state.data.locations.push(node);
+  save();
+  return node;
+}
+
+function renameLocation(id, name) {
+  const node = state.data.locations.find((l) => l.id === id);
+  const clean = (name || '').trim();
+  if (!node || !clean || clean === node.name) return true;
+  const clash = state.data.locations.some(
+    (l) => l.parentId === node.parentId && l.id !== id && l.name === clean
+  );
+  if (clash) {
+    toast('同级已有同名地点', 'error');
+    return false;
+  }
+  node.name = clean;
+  save();
+  return true;
+}
+
+function deleteLocation(id) {
+  const node = getNode(id);
+  if (!node || node.fixed) return;
+  const ids = subtreeIds(id);
+  const affected = state.data.entries.filter((e) => ids.has(e.locationId)).length;
+  const msg = affected
+    ? `删除「${node.name}」及其下级地点？其中 ${affected} 条收藏也会一并删除。`
+    : `删除「${node.name}」？`;
+  if (!window.confirm(msg)) return;
+  state.data.locations = state.data.locations.filter((l) => !ids.has(l.id));
+  state.data.entries = state.data.entries.filter((e) => !ids.has(e.locationId));
+  if (ids.has(state.view.nodeId)) state.view.nodeId = 'all';
+  save();
+  renderAll();
+  toast('已删除');
+}
+
+/* ---------- 渲染：侧边栏 ---------- */
+function renderAll(options = {}) {
+  renderTree();
+  renderExtra();
+  renderMain(options.animate !== false);
+  renderStats();
+  renderStorage();
+}
+
+function renderTree() {
+  const tree = $('#tree');
+  tree.innerHTML = '';
+  REGIONS.forEach((r) => tree.appendChild(nodeEl(r.id, 0)));
+  if (treeEdit) focusTreeEdit();
+}
+
+function nodeEl(id, depth) {
+  const node = getNode(id);
+  const kids = childrenOf(id);
+  const isOpen = state.open.has(id);
+  const wrap = el('div', { class: 'tree-node' });
+  wrap.dataset.id = id;
+
+  const row = el('div', {
+    class:
+      'tree-row' +
+      (state.view.nodeId === id ? ' active' : '') +
+      (node.level === 'region' ? ' is-region' : '') +
+      (id === 'cn' ? ' is-cn' : ''),
+  });
+  row.style.paddingLeft = 6 + depth * 15 + 'px';
+
+  const chev = el('button', {
+    type: 'button',
+    class: 'tree-chev' + (kids.length ? '' : ' empty') + (isOpen ? ' open' : ''),
+    'aria-label': isOpen ? '收起' : '展开',
+  });
+  chev.innerHTML = icon('chevron');
+  chev.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (!kids.length) return;
+    if (isOpen) state.open.delete(id);
+    else state.open.add(id);
+    persistOpen();
+    renderTree();
+  });
+  row.appendChild(chev);
+
+  row.appendChild(el('span', { class: 'tree-name', text: node.name, title: node.name }));
+  row.appendChild(el('span', { class: 'count', text: String(entriesIn(id).length) }));
+
+  const actions = el('div', { class: 'tree-actions' });
+  const level = childLevel(id);
+  if (level) {
+    const addBtn = el('button', {
+      type: 'button',
+      class: 'icon-btn tree-action-add',
+      title: `新增${levelName(level)}`,
+      'aria-label': `新增${levelName(level)}`,
+    });
+    addBtn.innerHTML = icon('plus');
+    addBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      state.open.add(id);
+      persistOpen();
+      treeEdit = { mode: 'add', parentId: id };
+      renderTree();
+    });
+    actions.appendChild(addBtn);
+  }
+
+  if (!node.fixed) {
+    const editBtn = el('button', {
+      type: 'button',
+      class: 'icon-btn',
+      title: '重命名',
+      'aria-label': '重命名',
+    });
+    editBtn.innerHTML = icon('edit');
+    editBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      treeEdit = { mode: 'rename', id };
+      renderTree();
+    });
+
+    const delBtn = el('button', {
+      type: 'button',
+      class: 'icon-btn tree-action-del',
+      title: '删除',
+      'aria-label': '删除',
+    });
+    delBtn.innerHTML = icon('trash');
+    delBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      deleteLocation(id);
+    });
+
+    actions.append(editBtn, delBtn);
+  }
+  row.appendChild(actions);
+
+  row.addEventListener('click', () => {
+    if (kids.length && !isOpen) {
+      state.open.add(id);
+      persistOpen();
+    }
+    setView(id);
+    closeSidebar();
+  });
+
+  wrap.appendChild(row);
+
+  if (treeEdit && treeEdit.mode === 'rename' && treeEdit.id === id) {
+    wrap.appendChild(treeEditRow(node.name, '新名称', (value) => {
+      const ok = renameLocation(id, value);
+      if (!ok) {
+        focusTreeEdit();
+        return;
+      }
+      treeEdit = null;
+      renderAll();
+    }));
+  }
+
+  if (treeEdit && treeEdit.mode === 'add' && treeEdit.parentId === id) {
+    const childLevelValue = childLevel(id);
+    wrap.appendChild(treeEditRow('', `新${levelName(childLevelValue)}名称`, (value) => {
+      const created = addLocation(value, id);
+      if (!created) {
+        focusTreeEdit();
+        return;
+      }
+      treeEdit = null;
+      state.open.add(id);
+      persistOpen();
+      state.view.nodeId = created.id;
+      renderAll();
+    }));
+  }
+
+  if (kids.length && isOpen) {
+    const box = el('div', { class: 'tree-children' });
+    kids.forEach((child) => box.appendChild(nodeEl(child.id, depth + 1)));
+    wrap.appendChild(box);
+  }
+
+  return wrap;
+}
+
+function treeEditRow(value, placeholder, commit) {
+  const wrap = el('div', { class: 'tree-add' });
+  const input = el('input', { class: 'tree-input', type: 'text', placeholder, value, autocomplete: 'off' });
+  const ok = el('button', { class: 'btn tiny primary', type: 'button', text: '确定' });
+  const cancel = el('button', { class: 'btn tiny ghost', type: 'button', text: '取消' });
+
+  const finish = () => {
+    const v = input.value.trim();
+    if (!v) {
+      input.focus();
+      return;
+    }
+    commit(v);
+  };
+  const quit = () => {
+    treeEdit = null;
+    renderTree();
+  };
+
+  ok.addEventListener('click', finish);
+  cancel.addEventListener('click', quit);
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      finish();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      quit();
+    }
+  });
+
+  wrap.append(input, ok, cancel);
+  return wrap;
+}
+
+function focusTreeEdit() {
+  const input = $('.tree-input');
+  if (!input) return;
+  input.focus();
+  input.select();
+}
+
+function renderExtra() {
+  const box = $('#treeExtra');
+  box.innerHTML = '';
+  const row = el('div', { class: 'tree-row is-extra' + (state.view.nodeId === 'unplaced' ? ' active' : '') });
+  const spacer = el('span', { class: 'tree-chev empty' });
+  spacer.innerHTML = icon('chevron');
+  row.appendChild(spacer);
+  row.appendChild(el('span', { class: 'tree-name', text: '无地点收藏' }));
+  row.appendChild(el('span', { class: 'count', text: String(entriesIn('unplaced').length) }));
+  row.addEventListener('click', () => {
+    setView('unplaced');
+    closeSidebar();
+  });
+  box.appendChild(row);
+}
+
+function renderStats() {
+  const counts = { food: 0, spot: 0, media: 0, book: 0, people: 0, topic: 0 };
+  state.data.entries.forEach((e) => {
+    if (counts[e.type] != null) counts[e.type] += 1;
+  });
+  const done = state.data.entries.filter((e) => e.checked).length;
+  $('#stats').innerHTML =
+    `<div>共 <strong>${state.data.entries.length}</strong> 条收藏 · 已打卡 <strong>${done}</strong></div>` +
+    `<div>${TYPES.food.label} ${counts.food} · ${TYPES.spot.label} ${counts.spot} · ${TYPES.media.label} ${counts.media} · ${TYPES.book.label} ${counts.book} · ${TYPES.people.label} ${counts.people} · ${TYPES.topic.label} ${counts.topic}</div>`;
+  $('#allCount').textContent = String(state.data.entries.length);
+}
+
+function renderStorage() {
+  const line = $('#storageLine');
+  if (!line) return;
+  if (isGithubMode()) {
+    const label =
+      syncState === 'saving'
+        ? '保存中…'
+        : syncState === 'error'
+        ? '保存失败'
+        : syncState === 'saved'
+        ? '已同步'
+        : '已连接';
+    line.textContent = `私有仓库 ${GH.config.owner}/${GH.config.repo} · ${label}`;
+    line.classList.add('linked');
+    line.title = '点击管理数据仓库';
+  } else {
+    line.textContent = '本机存储 · 连接私有仓库';
+    line.classList.remove('linked');
+    line.title = '连接 GitHub 私有数据仓库';
+  }
+}
+
+/* ---------- 设置：私有数据仓库 ---------- */
+function openSettings() {
+  const cfg = GH.config || {};
+  $('#setOwner').value = cfg.owner || '';
+  $('#setRepo').value = cfg.repo || '';
+  $('#setBranch').value = cfg.branch || 'main';
+  $('#setPath').value = cfg.path || 'data/data.json';
+  $('#setToken').value = cfg.token || '';
+  $('#settingsStatus').textContent = '';
+  $('#settingsStatus').className = 'settings-status';
+  $('#ghDisconnect').hidden = !isGithubMode();
+  $('#settingsBackdrop').hidden = false;
+  sessionStorage.setItem('interests.settingsSeen', '1');
+  setTimeout(() => $('#setOwner').focus(), 30);
+}
+
+function closeSettings() {
+  $('#settingsBackdrop').hidden = true;
+  $('#settingsStatus').textContent = '';
+}
+
+async function connectGithub() {
+  const status = $('#settingsStatus');
+  const show = (text, kind = '') => {
+    status.textContent = text;
+    status.className = 'settings-status' + (kind ? ' ' + kind : '');
+  };
+
+  const owner = $('#setOwner').value.trim();
+  const repo = $('#setRepo').value.trim();
+  const branch = $('#setBranch').value.trim() || 'main';
+  const path = $('#setPath').value.trim() || 'data/data.json';
+  const token = $('#setToken').value.trim();
+
+  if (!owner || !repo || !token) {
+    show('请填写用户名、私有仓库名和 Token', 'error');
+    return;
+  }
+
+  const previous = GH.config;
+  const cfg = { owner, repo, branch, path, token };
+  $('#ghConnect').disabled = true;
+  show('正在验证 Token 与仓库…');
+
+  try {
+    const repoRes = await fetch(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      }
+    );
+    if (repoRes.status === 401) throw new Error('Token 无效或已过期');
+    if (repoRes.status === 404) throw new Error('找不到该仓库，或 Token 没有访问权限');
+    if (!repoRes.ok) throw new Error(`无法访问仓库（${repoRes.status}）`);
+    const info = await repoRes.json();
+    if (!info.private) {
+      throw new Error('这个仓库是公开的。为保证数据私密，请换用私有仓库');
+    }
+
+    GH.config = cfg;
+    const existing = await ghLoad();
+
+    if (!existing) {
+      const localCount = previous ? 0 : state.data.entries.length;
+      let uploadLocal = false;
+      if (localCount > 0) {
+        const hasImage = state.data.entries.some((e) => e.fields && e.fields.image);
+        uploadLocal = window.confirm(
+          `私有仓库还没有数据。要把本机现有的 ${localCount} 条收藏上传上去吗？${
+            hasImage ? '\n注意：本机已有图片不会自动上传。' : ''
+          }`
+        );
+      }
+      await ghSave(uploadLocal ? state.data : { version: 1, entries: [], locations: [] });
+    }
+
+    writeGithubConfig(cfg);
+    closeSettings();
+    await loadData();
+    state.view.nodeId = 'all';
+    syncState = 'idle';
+    renderAll();
+    toast('已连接私有数据仓库');
+  } catch (err) {
+    GH.config = previous;
+    show(err.message || '连接失败', 'error');
+  } finally {
+    $('#ghConnect').disabled = false;
+  }
+}
+
+function disconnectGithub() {
+  if (!window.confirm('断开私有仓库？之后本机浏览器会改为读取本地服务数据，GitHub 上的数据不会被删除。')) return;
+  writeGithubConfig(null);
+  GH.config = null;
+  for (const promise of GH.imageCache.values()) {
+    promise.then((url) => URL.revokeObjectURL(url)).catch(() => {});
+  }
+  GH.imageCache.clear();
+  closeSettings();
+  syncState = 'idle';
+  loadData().then(() => {
+    state.view.nodeId = 'all';
+    renderAll();
+    toast('已断开私有仓库');
+  });
+}
+
+/* ---------- 渲染：主内容 ---------- */
+function setView(nodeId) {
+  state.view.nodeId = nodeId;
+  renderAll();
+}
+
+function renderMain(animate) {
+  const node = getNode(state.view.nodeId) || getNode('all');
+  const all = entriesIn(state.view.nodeId);
+  const list = visibleEntries();
+  const done = list.filter((e) => e.checked).length;
+  const filtered = !!(state.view.q.trim() || state.view.type !== 'all' || state.view.status !== 'all');
+
+  let eyebrow = '收藏地图';
+  if (state.view.nodeId === 'unplaced') eyebrow = '屏幕 · 书桌 · 念头';
+  else if (state.view.nodeId !== 'all') {
+    const parents = pathNames(state.view.nodeId).slice(0, -1);
+    eyebrow = parents.length ? parents.join(' · ') : '大洲';
+  }
+
+  $('#viewEyebrow').textContent = eyebrow;
+  $('#viewTitle').textContent = node.name;
+  $('#viewSub').textContent = filtered
+    ? `筛选出 ${list.length} 条（共 ${all.length} 条）· 已打卡 ${done} 条`
+    : `${all.length} 条收藏 · 已打卡 ${done} 条`;
+
+  $('#searchClear').hidden = !state.view.q;
+  $('#navAll').classList.toggle('active', state.view.nodeId === 'all');
+
+  renderSegs();
+
+  const cards = $('#cards');
+  cards.innerHTML = '';
+  cards.classList.toggle('no-anim', animate === false);
+
+  if (list.length) {
+    const frag = document.createDocumentFragment();
+    list.forEach((entry) => frag.appendChild(cardEl(entry)));
+    cards.appendChild(frag);
+    $('#empty').hidden = true;
+  } else {
+    $('#empty').hidden = false;
+    renderEmpty();
+  }
+}
+
+function renderSegs() {
+  const typeSeg = $('#typeSeg');
+  typeSeg.innerHTML = '';
+  TYPE_FILTERS.forEach((f) => {
+    const b = el('button', {
+      type: 'button',
+      class: state.view.type === f.value ? 'active' : '',
+      text: f.label,
+    });
+    b.addEventListener('click', () => {
+      state.view.type = f.value;
+      const typeDef = TYPES[f.value];
+      if (typeDef) {
+        if (!typeDef.place && state.view.nodeId !== 'all' && state.view.nodeId !== 'unplaced') {
+          state.view.nodeId = 'unplaced';
+        } else if (typeDef.place && state.view.nodeId === 'unplaced') {
+          state.view.nodeId = 'all';
+        }
+      }
+      renderAll();
+    });
+    typeSeg.appendChild(b);
+  });
+
+  const statusSeg = $('#statusSeg');
+  statusSeg.innerHTML = '';
+  STATUS_FILTERS.forEach((f) => {
+    const b = el('button', {
+      type: 'button',
+      class: state.view.status === f.value ? 'active' : '',
+      text: f.label,
+    });
+    b.addEventListener('click', () => {
+      state.view.status = f.value;
+      renderMain();
+    });
+    statusSeg.appendChild(b);
+  });
+}
+
+const GRADIENTS = [
+  'linear-gradient(135deg,#c46a4a,#8e3b28)',
+  'linear-gradient(135deg,#7d8a5c,#4c5a3c)',
+  'linear-gradient(135deg,#c39a4e,#8a6526)',
+  'linear-gradient(135deg,#8c7ba8,#5b4c78)',
+  'linear-gradient(135deg,#6f8b96,#3f5b66)',
+  'linear-gradient(135deg,#b5726a,#7d3f46)',
+];
+
+function hashStr(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i += 1) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+function gradientFor(entry) {
+  return GRADIENTS[hashStr((entry.title || '') + entry.id) % GRADIENTS.length];
+}
+
+function starsEl(rating) {
+  const wrap = el('span', { class: 'stars', title: `${rating} / 5` });
+  for (let i = 1; i <= 5; i += 1) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('class', 'star' + (i <= rating ? ' on' : ''));
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', STAR_PATH);
+    svg.appendChild(path);
+    wrap.appendChild(svg);
+  }
+  return wrap;
+}
+
+function shortPath(id) {
+  const names = pathNames(id);
+  if (!names.length) return '无地点';
+  return names.slice(-2).join(' › ');
+}
+
+function cardEl(entry) {
+  const type = TYPES[entry.type] || TYPES.food;
+  const card = el('article', {
+    class: 'card' + (entry.checked ? ' is-checked' : ''),
+    tabindex: '0',
+    role: 'button',
+    'aria-label': `${type.label}：${entry.title}`,
+  });
+  card.addEventListener('click', () => openDrawer(entry.id));
+  card.addEventListener('keydown', (e) => {
+    if (e.target !== card) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openDrawer(entry.id);
+    }
+  });
+
+  const media = el('div', { class: 'card-media' });
+  if (entry.fields && entry.fields.image) {
+    media.style.background = gradientFor(entry);
+    const fallback = el('div', { class: 'media-fallback', html: icon(type.icon) });
+    media.appendChild(fallback);
+    const img = el('img', { alt: entry.title, loading: 'lazy' });
+    img.addEventListener('load', () => fallback.remove(), { once: true });
+    img.addEventListener('error', () => img.remove(), { once: true });
+    applyImage(img, entry.fields.image);
+    media.appendChild(img);
+  } else {
+    media.style.background = gradientFor(entry);
+    media.appendChild(el('div', { class: 'media-fallback', html: icon(type.icon) }));
+  }
+  media.appendChild(
+    el('span', { class: 'type-chip ' + entry.type, html: `<span class="dot"></span>${type.label}` })
+  );
+  if (entry.checked) media.appendChild(el('span', { class: 'stamp', text: type.checkDone }));
+  card.appendChild(media);
+
+  const body = el('div', { class: 'card-body' });
+  body.appendChild(el('h3', { class: 'card-title', text: entry.title }));
+
+  const meta = el('div', { class: 'card-meta' });
+  let first = true;
+  if (entry.fields && entry.fields.rating) {
+    meta.appendChild(starsEl(entry.fields.rating));
+    first = false;
+  }
+  const bits = type.cardFields.map((k) => entry.fields && entry.fields[k]).filter(Boolean);
+  bits.forEach((bit) => {
+    if (!first) meta.appendChild(el('span', { class: 'sep', text: '·' }));
+    meta.appendChild(el('span', { text: String(bit) }));
+    first = false;
+  });
+  body.appendChild(meta);
+
+  const tags = (entry.fields && entry.fields.tags) || [];
+  if (tags.length) {
+    const box = el('div', { class: 'tags' });
+    tags.slice(0, 3).forEach((t) => box.appendChild(el('span', { class: 'tag', text: t })));
+    if (tags.length > 3) box.appendChild(el('span', { class: 'tag more', text: `+${tags.length - 3}` }));
+    body.appendChild(box);
+  }
+
+  const foot = el('div', { class: 'card-foot' });
+  const loc = el('div', {
+    class: 'card-loc',
+    title: entry.locationId ? pathNames(entry.locationId).join(' / ') : '无地点',
+  });
+  if (type.place && entry.locationId) {
+    loc.innerHTML = icon('pin');
+    loc.appendChild(el('span', { text: shortPath(entry.locationId) }));
+  } else {
+    loc.innerHTML = icon(type.place ? 'pin' : 'tag');
+    loc.appendChild(el('span', { text: entry.locationId ? shortPath(entry.locationId) : type.label + ' · 无地点' }));
+  }
+  foot.appendChild(loc);
+
+  const checkLabel = el('label', { class: 'check', title: type.checkHint });
+  const cb = el('input', { type: 'checkbox' });
+  cb.checked = !!entry.checked;
+  cb.addEventListener('click', (e) => e.stopPropagation());
+  cb.addEventListener('change', (e) => {
+    e.stopPropagation();
+    setChecked(entry.id, cb.checked);
+  });
+  checkLabel.appendChild(cb);
+  checkLabel.appendChild(el('span', { text: type.checkLabel }));
+  checkLabel.addEventListener('click', (e) => e.stopPropagation());
+  foot.appendChild(checkLabel);
+
+  body.appendChild(foot);
+  card.appendChild(body);
+  return card;
+}
+
+function setChecked(id, value) {
+  const entry = entryById(id);
+  if (!entry) return;
+  entry.checked = !!value;
+  entry.checkedAt = value ? Date.now() : null;
+  entry.updatedAt = Date.now();
+  save();
+  renderAll({ animate: false });
+  if (!$('#drawerBackdrop').hidden) refreshDrawerCheck();
+}
+
+function refreshDrawerCheck() {
+  const entry = entryById(currentDrawerId);
+  if (!entry) return;
+  const type = TYPES[entry.type] || TYPES.food;
+  const top = $('#drawer .drawer-top');
+  if (top) {
+    const existing = top.querySelector('.pill.checked');
+    if (entry.checked && !existing) top.appendChild(el('span', { class: 'pill checked', text: type.checkDone }));
+    if (!entry.checked && existing) existing.remove();
+  }
+  const cb = $('#drawer .drawer-foot input[type="checkbox"]');
+  if (cb) cb.checked = entry.checked;
+  const note = $('#drawer .drawer-note');
+  if (note) note.textContent = drawerNote(entry, type);
+}
+
+function drawerNote(entry, type) {
+  const parts = [];
+  if (entry.checkedAt) parts.push(`${type.checkDone}于 ${formatTs(entry.checkedAt)}`);
+  parts.push(`收录于 ${formatTs(entry.createdAt)}`);
+  if (entry.updatedAt && entry.updatedAt - entry.createdAt > 60000) {
+    parts.push(`更新于 ${formatTs(entry.updatedAt)}`);
+  }
+  return parts.join(' · ');
+}
+
+function renderEmpty() {
+  const box = $('#empty');
+  box.innerHTML = '';
+  const hasQuery = !!(state.view.q.trim() || state.view.status !== 'all');
+
+  if (hasQuery) {
+    box.append(
+      el('div', { class: 'empty-mark', text: '寻' }),
+      el('h3', { text: '没有找到匹配的收藏' }),
+      el('p', { text: '换个关键词，或清除筛选条件再看看。' })
+    );
+    const actions = el('div', { class: 'empty-actions' });
+    const clear = el('button', { class: 'btn ghost', type: 'button', text: '清除筛选' });
+    clear.addEventListener('click', clearFilters);
+    actions.appendChild(clear);
+    box.appendChild(actions);
+    return;
+  }
+
+  if (state.view.type !== 'all') {
+    const type = TYPES[state.view.type];
+    box.append(
+      el('div', { class: 'empty-mark', text: '种' }),
+      el('h3', { text: `还没有${type.label}记录` }),
+      el('p', { text: '记下第一条，慢慢攒成自己的收藏。' })
+    );
+    const actions = el('div', { class: 'empty-actions' });
+    const add = el('button', { class: 'btn primary', type: 'button' });
+    add.innerHTML = icon(type.icon) + `<span>添加${type.label}</span>`;
+    add.addEventListener('click', () => openEditor({ type: state.view.type }));
+    actions.appendChild(add);
+    box.appendChild(actions);
+    return;
+  }
+
+  const unplaced = state.view.nodeId === 'unplaced';
+  box.append(
+    el('div', { class: 'empty-mark', text: '种' }),
+    el('h3', { text: unplaced ? '还没有无地点收藏' : '这里还空着' }),
+    el('p', {
+      text: unplaced
+        ? '好剧、好书、想研究的主题、值得记住的人，都可以放在这里。'
+        : '把吃过的好菜、去过的地方记下来，慢慢长成你的地图。',
+    })
+  );
+
+  const actions = el('div', { class: 'empty-actions' });
+  (unplaced ? ['media', 'book', 'people', 'topic'] : ['food', 'spot']).forEach((t) => {
+    const b = el('button', {
+      class: 'btn ' + (t === 'food' || t === 'media' ? 'primary' : 'ghost'),
+      type: 'button',
+    });
+    b.innerHTML = icon(TYPES[t].icon) + `<span>添加${TYPES[t].label}</span>`;
+    b.addEventListener('click', () => openEditor({ type: t }));
+    actions.appendChild(b);
+  });
+  box.appendChild(actions);
+}
+
+function clearFilters() {
+  state.view.type = 'all';
+  state.view.status = 'all';
+  state.view.q = '';
+  $('#searchInput').value = '';
+  renderMain();
+}
+
+/* ---------- 详情抽屉 ---------- */
+let currentDrawerId = null;
+
+function openDrawer(id) {
+  const entry = entryById(id);
+  if (!entry) return;
+  currentDrawerId = id;
+  const type = TYPES[entry.type] || TYPES.food;
+  const drawer = $('#drawer');
+  drawer.innerHTML = '';
+
+  const scroll = el('div', { class: 'drawer-scroll' });
+  const media = el('div', { class: 'drawer-media' });
+  if (entry.fields && entry.fields.image) {
+    media.style.background = gradientFor(entry);
+    const fallback = el('div', { class: 'media-fallback', html: icon(type.icon) });
+    media.appendChild(fallback);
+    const img = el('img', { alt: entry.title });
+    img.addEventListener('load', () => fallback.remove(), { once: true });
+    img.addEventListener('error', () => img.remove(), { once: true });
+    applyImage(img, entry.fields.image);
+    media.appendChild(img);
+  } else {
+    media.style.background = gradientFor(entry);
+    media.appendChild(el('div', { class: 'media-fallback', html: icon(type.icon) }));
+  }
+
+  const closeBtn = el('button', { class: 'icon-btn drawer-close', type: 'button', 'aria-label': '关闭' });
+  closeBtn.innerHTML = icon('close');
+  closeBtn.addEventListener('click', closeDrawer);
+  media.appendChild(closeBtn);
+  scroll.appendChild(media);
+
+  const body = el('div', { class: 'drawer-body' });
+  const top = el('div', { class: 'drawer-top' });
+  top.appendChild(el('span', { class: 'pill ' + entry.type, text: type.label }));
+  if (entry.checked) top.appendChild(el('span', { class: 'pill checked', text: type.checkDone }));
+  body.appendChild(top);
+
+  body.appendChild(el('h2', { class: 'drawer-title', text: entry.title }));
+
+  const crumb = el('div', { class: 'drawer-crumb' });
+  if (entry.locationId) {
+    crumb.innerHTML = icon('pin');
+    crumb.appendChild(el('b', { text: pathNames(entry.locationId).join(' / ') || '未知地点' }));
+  } else {
+    crumb.innerHTML = icon('tag');
+    crumb.appendChild(el('b', { text: '无地点 · ' + type.label }));
+  }
+  body.appendChild(crumb);
+
+  if (entry.fields && entry.fields.rating) {
+    const r = el('div', { class: 'drawer-rating' });
+    r.appendChild(starsEl(entry.fields.rating));
+    r.appendChild(el('span', { text: `${entry.fields.rating}.0 / 5` }));
+    body.appendChild(r);
+  }
+
+  const facts = el('dl', { class: 'facts' });
+  let hasFacts = false;
+  for (const def of type.fields) {
+    const value = entry.fields && entry.fields[def.key];
+    if (!value) continue;
+    hasFacts = true;
+    facts.appendChild(el('dt', { text: def.label }));
+    facts.appendChild(el('dd', { text: String(value) }));
+  }
+  if (entry.fields && entry.fields.date) {
+    hasFacts = true;
+    facts.appendChild(el('dt', { text: '时间' }));
+    facts.appendChild(el('dd', { text: formatDate(entry.fields.date) }));
+  }
+  if (hasFacts) body.appendChild(facts);
+
+  const tags = (entry.fields && entry.fields.tags) || [];
+  if (tags.length) {
+    const tagBox = el('div', { class: 'drawer-tags' });
+    tags.forEach((t) => tagBox.appendChild(el('span', { class: 'tag', text: t })));
+    body.appendChild(tagBox);
+  }
+
+  body.appendChild(el('p', { class: 'drawer-note', text: drawerNote(entry, type) }));
+  scroll.appendChild(body);
+  drawer.appendChild(scroll);
+
+  const foot = el('div', { class: 'drawer-foot' });
+  const checkLine = el('label', { class: 'check-line' });
+  const cb = el('input', { type: 'checkbox' });
+  cb.checked = !!entry.checked;
+  cb.addEventListener('change', () => setChecked(entry.id, cb.checked));
+  checkLine.appendChild(cb);
+  checkLine.appendChild(el('span', { text: type.checkDone }));
+  foot.appendChild(checkLine);
+
+  const editBtn = el('button', { class: 'btn tiny ghost', type: 'button' });
+  editBtn.innerHTML = icon('edit') + '<span>编辑</span>';
+  editBtn.addEventListener('click', () => {
+    const target = entryById(entry.id);
+    closeDrawer();
+    openEditor({ entry: target });
+  });
+  foot.appendChild(editBtn);
+
+  const delBtn = el('button', { class: 'btn tiny danger', type: 'button' });
+  delBtn.innerHTML = icon('trash') + '<span>删除</span>';
+  delBtn.addEventListener('click', () => deleteEntry(entry.id));
+  foot.appendChild(delBtn);
+
+  drawer.appendChild(foot);
+  $('#drawerBackdrop').hidden = false;
+}
+
+function closeDrawer() {
+  $('#drawerBackdrop').hidden = true;
+  $('#drawer').innerHTML = '';
+  currentDrawerId = null;
+}
+
+function deleteEntry(id) {
+  const entry = entryById(id);
+  if (!entry) return;
+  if (!window.confirm(`删除「${entry.title}」？此操作不可撤销。`)) return;
+  state.data.entries = state.data.entries.filter((e) => e.id !== id);
+  save();
+  closeDrawer();
+  renderAll();
+  toast('已删除');
+}
+
+/* ---------- 编辑器 ---------- */
+function defaultEditorLocation() {
+  const node = getNode(state.view.nodeId);
+  if (!node || state.view.nodeId === 'all' || state.view.nodeId === 'unplaced') return null;
+  return state.view.nodeId;
+}
+
+function splitLocation(id) {
+  if (!id) return { region: 'cn', mid: '', city: '' };
+  const path = pathOf(id);
+  return {
+    region: path[0] ? path[0].id : 'cn',
+    mid: path[1] ? path[1].id : '',
+    city: path[2] ? path[2].id : '',
+  };
+}
+
+function openEditor(options = {}) {
+  const entry = options.entry || null;
+  const type =
+    options.type ||
+    (entry ? entry.type : state.view.type !== 'all' ? state.view.type : 'food');
+  const locationId = entry ? entry.locationId : options.locationId ?? defaultEditorLocation();
+  const loc = splitLocation(locationId);
+
+  draft = {
+    id: entry ? entry.id : null,
+    type,
+    title: entry ? entry.title : '',
+    checked: entry ? !!entry.checked : false,
+    rating: (entry && entry.fields && entry.fields.rating) || 0,
+    tags: entry && entry.fields && Array.isArray(entry.fields.tags) ? entry.fields.tags.slice() : [],
+    date: entry ? (entry.fields && entry.fields.date) || '' : todayInput(),
+    image: (entry && entry.fields && entry.fields.image) || '',
+    previewUrl: (entry && entry.fields && entry.fields.image) || '',
+    file: null,
+    values: {},
+    locRegion: loc.region,
+    locMid: loc.mid,
+    locCity: loc.city,
+  };
+  if (entry) {
+    for (const def of TYPES[type].fields) {
+      const v = entry.fields && entry.fields[def.key];
+      if (v != null) draft.values[def.key] = v;
+    }
+  }
+
+  $('#editorTitle').textContent = entry ? '编辑收藏' : '新收藏';
+  $('#editorHint').textContent = '';
+  buildEditorBody();
+  $('#editorBackdrop').hidden = false;
+  setTimeout(() => {
+    const input = $('#editorBody [name="title"]');
+    if (input) input.focus();
+  }, 30);
+}
+
+function buildEditorBody() {
+  const body = $('#editorBody');
+  body.innerHTML = '';
+  const type = TYPES[draft.type];
+
+  const switcher = el('div', { class: 'type-switch' });
+  TYPE_ORDER.forEach((key) => {
+    const b = el('button', {
+      type: 'button',
+      class: draft.type === key ? 'active' : '',
+    });
+    b.innerHTML = icon(TYPES[key].icon) + `<span>${TYPES[key].label}</span>`;
+    b.addEventListener('click', () => switchType(key));
+    switcher.appendChild(b);
+  });
+  body.appendChild(switcher);
+
+  const grid = el('div', { class: 'form-grid' });
+
+  const titleInput = el('input', {
+    type: 'text',
+    name: 'title',
+    value: draft.title,
+    placeholder: type.titlePlaceholder,
+    maxlength: '80',
+    autocomplete: 'off',
+  });
+  grid.appendChild(fieldEl({ label: type.titleLabel, required: true, span: true }, titleInput));
+
+  if (type.place) {
+    const locField = el('div', { class: 'field span-2' });
+    locField.appendChild(el('span', { class: 'label', text: '地点' }));
+    const locArea = el('div', { class: 'loc-area' });
+    locField.appendChild(locArea);
+    locField.appendChild(
+      el('div', { class: 'loc-note', text: '省份与城市都可以手动录入；也可以只记到国家或省份。' })
+    );
+    grid.appendChild(locField);
+    renderLocArea(locArea);
+  }
+
+  for (const def of type.fields) {
+    let input;
+    if (def.type === 'textarea') {
+      input = el('textarea', { name: def.key, placeholder: def.ph || '', rows: '2' });
+      input.value = draft.values[def.key] || '';
+    } else if (def.type === 'select') {
+      input = el('select', { name: def.key });
+      input.appendChild(new Option('请选择', ''));
+      (def.options || []).forEach((opt) => input.appendChild(new Option(opt, opt)));
+      input.value = draft.values[def.key] || '';
+    } else {
+      input = el('input', {
+        type: 'text',
+        name: def.key,
+        placeholder: def.ph || '',
+        value: draft.values[def.key] || '',
+        autocomplete: 'off',
+      });
+    }
+    grid.appendChild(fieldEl({ label: def.label, span: def.span }, input));
+  }
+
+  grid.appendChild(el('div', { class: 'form-divider span-2' }));
+
+  const ratingField = el('div', { class: 'field' });
+  ratingField.appendChild(el('span', { class: 'label', text: '评分' }));
+  const ratingBox = el('div', { class: 'rating-input' });
+  for (let i = 1; i <= 5; i += 1) {
+    const b = el('button', { type: 'button', class: i <= draft.rating ? 'on' : '', title: `${i} 星` });
+    b.innerHTML = `<svg class="star-svg" viewBox="0 0 24 24"><path d="${STAR_PATH}"/></svg>`;
+    b.addEventListener('click', () => {
+      draft.rating = draft.rating === i ? 0 : i;
+      updateRating(ratingBox);
+    });
+    ratingBox.appendChild(b);
+  }
+  const clearRating = el('button', { type: 'button', class: 'rating-clear', text: '清除' });
+  clearRating.addEventListener('click', () => {
+    draft.rating = 0;
+    updateRating(ratingBox);
+  });
+  ratingBox.appendChild(clearRating);
+  ratingField.appendChild(ratingBox);
+  grid.appendChild(ratingField);
+
+  const dateInput = el('input', { type: 'date', name: 'date', value: draft.date });
+  draft.date = dateInput.value;
+  grid.appendChild(fieldEl({ label: type.dateLabel }, dateInput));
+
+  const tagsInput = el('input', {
+    type: 'text',
+    name: 'tags',
+    value: draft.tags.join('，'),
+    placeholder: '用逗号分隔，如：川菜，性价比高',
+    autocomplete: 'off',
+  });
+  grid.appendChild(fieldEl({ label: '标签', span: true }, tagsInput));
+
+  grid.appendChild(buildImageField());
+
+  const checkLine = el('label', { class: 'check-line span-2' });
+  const cb = el('input', { type: 'checkbox', name: 'checked' });
+  cb.checked = !!draft.checked;
+  checkLine.appendChild(cb);
+  checkLine.appendChild(el('span', { text: `${type.checkDone}（${type.checkHint}）` }));
+  grid.appendChild(checkLine);
+
+  body.appendChild(grid);
+}
+
+function fieldEl({ label, required, span }, input) {
+  const field = el('div', { class: 'field' + (span ? ' span-2' : '') });
+  const labelEl = el('span', { class: 'label', html: label + (required ? '<span class="req">*</span>' : '') });
+  if (!input.getAttribute('aria-label')) input.setAttribute('aria-label', label);
+  field.append(labelEl, input);
+  return field;
+}
+
+function updateRating(box) {
+  [...box.querySelectorAll('button[title]')].forEach((b, idx) => {
+    b.classList.toggle('on', idx + 1 <= draft.rating);
+  });
+}
+
+function renderLocArea(container) {
+  container.innerHTML = '';
+
+  if (!REGIONS.some((r) => r.id === draft.locRegion)) draft.locRegion = REGIONS[0].id;
+  if (draft.locMid && !childrenOf(draft.locRegion).some((c) => c.id === draft.locMid)) {
+    draft.locMid = '';
+    draft.locCity = '';
+  }
+  if (draft.locCity && !childrenOf(draft.locMid).some((c) => c.id === draft.locCity)) {
+    draft.locCity = '';
+  }
+
+  const selects = el('div', { class: 'loc-selects' });
+
+  const regionSel = el('select', { name: 'locRegion' });
+  REGIONS.forEach((r) => regionSel.appendChild(new Option(r.name, r.id, false, r.id === draft.locRegion)));
+  regionSel.value = draft.locRegion;
+  regionSel.addEventListener('change', () => {
+    draft.locRegion = regionSel.value;
+    draft.locMid = '';
+    draft.locCity = '';
+    renderLocArea(container);
+  });
+
+  const midLevel = draft.locRegion === 'cn' ? 'province' : 'country';
+  const midSel = el('select', { name: 'locMid' });
+  midSel.appendChild(new Option(`— ${levelName(midLevel)} —`, ''));
+  childrenOf(draft.locRegion).forEach((c) => midSel.appendChild(new Option(c.name, c.id)));
+  midSel.value = draft.locMid || '';
+  midSel.addEventListener('change', () => {
+    draft.locMid = midSel.value;
+    draft.locCity = '';
+    renderLocArea(container);
+  });
+
+  const citySel = el('select', { name: 'locCity' });
+  citySel.appendChild(new Option('— 城市 —', ''));
+  if (draft.locMid) {
+    childrenOf(draft.locMid).forEach((c) => citySel.appendChild(new Option(c.name, c.id)));
+  }
+  citySel.value = draft.locCity || '';
+  citySel.disabled = !draft.locMid;
+  citySel.addEventListener('change', () => {
+    draft.locCity = citySel.value;
+  });
+
+  selects.append(regionSel, midSel, citySel);
+  container.appendChild(selects);
+
+  const addRow = el('div', { class: 'loc-add' });
+
+  const addMid = el('button', { type: 'button', class: 'btn tiny ghost' });
+  addMid.innerHTML = icon('plus') + `<span>新增${levelName(midLevel)}</span>`;
+  addMid.addEventListener('click', () => {
+    showInlineAdd(addRow, `新${levelName(midLevel)}名称`, (name) => {
+      const node = addLocation(name, draft.locRegion);
+      if (!node) return;
+      draft.locMid = node.id;
+      draft.locCity = '';
+      state.open.add(draft.locRegion);
+      persistOpen();
+      renderLocArea(container);
+      renderTree();
+      renderExtra();
+    });
+  });
+  addRow.appendChild(addMid);
+
+  if (draft.locMid) {
+    const addCity = el('button', { type: 'button', class: 'btn tiny ghost' });
+    addCity.innerHTML = icon('plus') + '<span>新增城市</span>';
+    addCity.addEventListener('click', () => {
+      showInlineAdd(addRow, '新城市名称', (name) => {
+        const node = addLocation(name, draft.locMid);
+        if (!node) return;
+        draft.locCity = node.id;
+        state.open.add(draft.locRegion);
+        state.open.add(draft.locMid);
+        persistOpen();
+        renderLocArea(container);
+        renderTree();
+        renderExtra();
+      });
+    });
+    addRow.appendChild(addCity);
+  }
+
+  container.appendChild(addRow);
+}
+
+function showInlineAdd(anchor, placeholder, commit) {
+  const existing = anchor.querySelector('.inline-add');
+  if (existing) existing.remove();
+
+  const row = el('div', { class: 'inline-add' });
+  const input = el('input', { type: 'text', placeholder, autocomplete: 'off' });
+  const ok = el('button', { type: 'button', class: 'btn tiny primary', text: '添加' });
+  const cancel = el('button', { type: 'button', class: 'btn tiny ghost', text: '取消' });
+
+  const finish = () => {
+    const value = input.value.trim();
+    if (!value) {
+      input.focus();
+      return;
+    }
+    row.remove();
+    commit(value);
+  };
+  const quit = () => row.remove();
+
+  ok.addEventListener('click', finish);
+  cancel.addEventListener('click', quit);
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      finish();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      quit();
+    }
+  });
+
+  row.append(input, ok, cancel);
+  anchor.appendChild(row);
+  input.focus();
+}
+
+function buildImageField() {
+  const wrap = el('div', { class: 'field span-2' });
+  wrap.appendChild(el('span', { class: 'label', text: '图片' }));
+
+  const inner = el('div', { class: 'image-field' });
+  const preview = el('div', { class: 'image-preview' });
+  const renderPreview = () => {
+    preview.innerHTML = '';
+    if (!draft.previewUrl) {
+      preview.innerHTML = icon('image');
+      return;
+    }
+    const img = el('img', { alt: '' });
+    img.addEventListener(
+      'error',
+      () => {
+        preview.innerHTML = icon('image');
+      },
+      { once: true }
+    );
+    applyImage(img, draft.previewUrl);
+    preview.appendChild(img);
+  };
+  renderPreview();
+
+  const actions = el('div', { class: 'image-actions' });
+  const fileInput = el('input', { type: 'file', accept: 'image/*', hidden: true });
+  const pick = el('button', { type: 'button', class: 'btn tiny ghost' });
+  pick.innerHTML = icon('upload') + '<span>选择图片</span>';
+  pick.addEventListener('click', () => fileInput.click());
+
+  const remove = el('button', { type: 'button', class: 'btn tiny ghost' });
+  remove.innerHTML = icon('trash') + '<span>移除图片</span>';
+  remove.hidden = !draft.previewUrl;
+  remove.addEventListener('click', () => {
+    draft.file = null;
+    draft.image = '';
+    if (draft.previewUrl && draft.previewUrl.startsWith('blob:')) URL.revokeObjectURL(draft.previewUrl);
+    draft.previewUrl = '';
+    fileInput.value = '';
+    renderPreview();
+    remove.hidden = true;
+  });
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast('请选择图片文件', 'error');
+      return;
+    }
+    if (draft.previewUrl && draft.previewUrl.startsWith('blob:')) URL.revokeObjectURL(draft.previewUrl);
+    draft.file = file;
+    draft.previewUrl = URL.createObjectURL(file);
+    renderPreview();
+    remove.hidden = false;
+  });
+
+  actions.append(pick, fileInput, remove);
+  inner.append(preview, actions);
+  wrap.appendChild(inner);
+  return wrap;
+}
+
+function readDraftFromForm() {
+  if (!draft) return;
+  const body = $('#editorBody');
+  const title = body.querySelector('[name="title"]');
+  if (title) draft.title = title.value;
+  const date = body.querySelector('[name="date"]');
+  if (date) draft.date = date.value;
+  const tags = body.querySelector('[name="tags"]');
+  if (tags) draft.tags = parseTags(tags.value);
+  const checked = body.querySelector('[name="checked"]');
+  if (checked) draft.checked = checked.checked;
+  for (const def of TYPES[draft.type].fields) {
+    const input = body.querySelector(`[name="${def.key}"]`);
+    if (input) draft.values[def.key] = input.value;
+  }
+  const region = body.querySelector('[name="locRegion"]');
+  if (region) draft.locRegion = region.value;
+  const mid = body.querySelector('[name="locMid"]');
+  if (mid) draft.locMid = mid.value;
+  const city = body.querySelector('[name="locCity"]');
+  if (city) draft.locCity = city.value;
+}
+
+function switchType(next) {
+  if (!draft || draft.type === next) return;
+  readDraftFromForm();
+  const keep = {
+    id: draft.id,
+    title: draft.title,
+    checked: draft.checked,
+    rating: draft.rating,
+    tags: draft.tags,
+    date: draft.date,
+    image: draft.image,
+    previewUrl: draft.previewUrl,
+    file: draft.file,
+    locRegion: draft.locRegion,
+    locMid: draft.locMid,
+    locCity: draft.locCity,
+  };
+  draft = { ...keep, type: next, values: {} };
+  buildEditorBody();
+  $('#editorHint').textContent = '';
+}
+
+function parseTags(value) {
+  return String(value)
+    .split(/[,，、;；\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+async function saveEditor() {
+  if (!draft) return;
+  readDraftFromForm();
+
+  const title = draft.title.trim();
+  if (!title) {
+    $('#editorHint').textContent = '请先填写名称';
+    const input = $('#editorBody [name="title"]');
+    if (input) input.focus();
+    return;
+  }
+  $('#editorHint').textContent = '';
+
+  const saveBtn = $('#editorSave');
+  const isEdit = !!draft.id;
+  saveBtn.disabled = true;
+  const originalText = saveBtn.textContent;
+
+  try {
+    let image = draft.image || '';
+    if (draft.file) {
+      saveBtn.textContent = '上传图片…';
+      image = await uploadImage(draft.file);
+    }
+
+    const fields = {
+      rating: draft.rating || 0,
+      tags: draft.tags.filter(Boolean),
+      date: draft.date || '',
+      image,
+    };
+    for (const def of TYPES[draft.type].fields) {
+      const value = (draft.values[def.key] || '').trim();
+      if (value) fields[def.key] = value;
+    }
+
+    let locationId = null;
+    if (TYPES[draft.type].place) {
+      locationId = draft.locCity || draft.locMid || draft.locRegion || null;
+    }
+
+    const now = Date.now();
+    if (isEdit) {
+      const entry = entryById(draft.id);
+      if (entry) {
+        const wasChecked = entry.checked;
+        Object.assign(entry, {
+          type: draft.type,
+          title,
+          locationId,
+          checked: !!draft.checked,
+          fields,
+          updatedAt: now,
+        });
+        if (entry.checked && !wasChecked) entry.checkedAt = now;
+        if (!entry.checked) entry.checkedAt = null;
+      }
+    } else {
+      state.data.entries.push({
+        id: 'e-' + uid(),
+        type: draft.type,
+        title,
+        locationId,
+        checked: !!draft.checked,
+        checkedAt: draft.checked ? now : null,
+        fields,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    save();
+    renderAll();
+    closeEditor();
+    toast(isEdit ? '已保存修改' : '已收入收藏');
+  } catch (err) {
+    console.error(err);
+    toast(err.message || '保存失败，请重试', 'error');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = originalText;
+  }
+}
+
+function closeEditor() {
+  if (draft && draft.previewUrl && draft.previewUrl.startsWith('blob:')) {
+    URL.revokeObjectURL(draft.previewUrl);
+  }
+  draft = null;
+  $('#editorBackdrop').hidden = true;
+  $('#editorBody').innerHTML = '';
+  $('#editorHint').textContent = '';
+}
+
+/* ---------- 图片 ---------- */
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const max = 1400;
+        let width = img.naturalWidth;
+        let height = img.naturalHeight;
+        const scale = Math.min(1, max / Math.max(width, height));
+        width = Math.max(1, Math.round(width * scale));
+        height = Math.max(1, Math.round(height * scale));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const mime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        let result = canvas.toDataURL(mime, 0.82);
+        if (mime === 'image/png' && result.length > 400000) {
+          result = canvas.toDataURL('image/jpeg', 0.85);
+        }
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('无法读取这张图片'));
+    };
+    img.src = url;
+  });
+}
+
+async function uploadImage(file) {
+  if (isGithubMode()) return ghUploadImage(file);
+  const dataUrl = await compressImage(file);
+  const res = await fetch('/api/images', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload.error || '图片上传失败');
+  return payload.url;
+}
+
+/* ---------- 备份 ---------- */
+async function exportBackup() {
+  try {
+    const data = state.data;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = el('a', { href: url, download: `种草美好备份-${formatTs(Date.now())}.json` });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('已导出数据备份');
+  } catch {
+    toast('导出失败', 'error');
+  }
+}
+
+async function importBackup(file) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data || !Array.isArray(data.entries) || !Array.isArray(data.locations)) {
+      throw new Error('文件格式不正确');
+    }
+    const ok = window.confirm(
+      `将导入 ${data.entries.length} 条收藏、${data.locations.length} 个地点，并覆盖当前数据。\n建议先导出当前数据备份。继续吗？`
+    );
+    if (!ok) return;
+    const next = { version: 1, entries: data.entries, locations: data.locations };
+    await storeWrite(next);
+    state.data = next;
+    state.view.nodeId = 'all';
+    renderAll();
+    toast('导入完成');
+  } catch (err) {
+    toast('导入失败：' + (err.message || '未知错误'), 'error');
+  }
+}
+
+/* ---------- 提示 ---------- */
+function toast(message, kind = '') {
+  const box = $('#toast');
+  box.textContent = message;
+  box.className = 'toast show' + (kind === 'error' ? ' error' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    box.className = 'toast';
+  }, 2800);
+}
+
+/* ---------- 侧栏（移动端） ---------- */
+function openSidebar() {
+  $('.app').classList.add('sidebar-open');
+}
+function closeSidebar() {
+  $('.app').classList.remove('sidebar-open');
+}
+
+/* ---------- 事件绑定 ---------- */
+function bindStaticIcons() {
+  $('.nav-all-icon').innerHTML = icon('inbox');
+  $('.search-icon').innerHTML = icon('search');
+  $('#searchClear').innerHTML = icon('close');
+  $('#menuBtn').innerHTML = icon('menu');
+  $('#sidebarClose').innerHTML = icon('close');
+  $('#editorClose').innerHTML = icon('close');
+  $('#settingsClose').innerHTML = icon('close');
+  $('#addBtn').innerHTML = icon('plus') + '<span>新收藏</span>';
+  $('#exportBtn').innerHTML = icon('download') + '<span>导出</span>';
+  $('#importBtn').innerHTML = icon('upload') + '<span>导入</span>';
+}
+
+function bindEvents() {
+  $('#navAll').addEventListener('click', () => {
+    setView('all');
+    closeSidebar();
+  });
+
+  $('#addBtn').addEventListener('click', () => {
+    const type = state.view.type !== 'all' ? state.view.type : 'food';
+    openEditor({ type });
+  });
+
+  $('#searchInput').addEventListener('input', (e) => {
+    const value = e.target.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      state.view.q = value;
+      renderMain();
+    }, 140);
+  });
+  $('#searchClear').addEventListener('click', () => {
+    $('#searchInput').value = '';
+    state.view.q = '';
+    renderMain();
+    $('#searchInput').focus();
+  });
+
+  $('#menuBtn').addEventListener('click', openSidebar);
+  $('#sidebarClose').addEventListener('click', closeSidebar);
+  $('#sidebarScrim').addEventListener('click', closeSidebar);
+
+  $('#storageLine').addEventListener('click', openSettings);
+  $('#settingsClose').addEventListener('click', closeSettings);
+  $('#ghCancel').addEventListener('click', closeSettings);
+  $('#settingsBackdrop').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeSettings();
+  });
+  $('#ghConnect').addEventListener('click', connectGithub);
+  $('#ghDisconnect').addEventListener('click', disconnectGithub);
+
+  $('#editorClose').addEventListener('click', closeEditor);
+  $('#editorCancel').addEventListener('click', closeEditor);
+  $('#editorSave').addEventListener('click', saveEditor);
+
+  $('#drawerBackdrop').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeDrawer();
+  });
+
+  $('#exportBtn').addEventListener('click', exportBackup);
+  $('#importBtn').addEventListener('click', () => $('#importFile').click());
+  $('#importFile').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) importBackup(file);
+    e.target.value = '';
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!$('#editorBackdrop').hidden) {
+      closeEditor();
+      return;
+    }
+    if (!$('#settingsBackdrop').hidden) {
+      closeSettings();
+      return;
+    }
+    if (!$('#drawerBackdrop').hidden) {
+      closeDrawer();
+      return;
+    }
+    if ($('.app').classList.contains('sidebar-open')) closeSidebar();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushSave();
+  });
+
+  window.addEventListener('beforeunload', () => {
+    if (!dirty || isGithubMode()) return;
+    fetch('/api/data', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state.data),
+      keepalive: true,
+    }).catch(() => {});
+  });
+}
+
+/* ---------- 启动 ---------- */
+async function init() {
+  GH.config = readGithubConfig();
+  bindStaticIcons();
+  bindEvents();
+  await loadData();
+  renderAll();
+}
+
+init();
