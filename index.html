@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#f6f1e6">
 <title>种草美好</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23b2412b'/%3E%3Ctext x='32' y='45' font-size='36' text-anchor='middle' fill='%23fff6ee' font-family='serif'%3E%E7%A7%8D%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="styles.css?v=9">
+<link rel="stylesheet" href="styles.css?v=10">
 </head>
 <body>
 <div class="app">
@@ -105,7 +105,7 @@
       <button class="icon-btn" id="settingsClose" aria-label="关闭"></button>
     </header>
     <div class="modal-body">
-      <p class="settings-intro">公开的网站只包含页面代码，不会展示你的收藏。收藏数据保存在一个 GitHub 私有仓库里，由这个浏览器使用仅限该仓库的 Token 读写。</p>
+      <p class="settings-intro">公开的网站只包含页面代码。收藏先保存在这个浏览器里，并使用仅限该私有仓库的 Token 同步到 GitHub；换设备时用「恢复」拉取云端最新数据。</p>
       <div class="cloud-status" id="cloudStatus" hidden></div>
       <div class="form-grid">
         <label class="field"><span class="label">GitHub 用户名</span><input id="setOwner" type="text" autocomplete="off" placeholder="例如 wantianxiangsean"></label>
@@ -133,6 +133,6 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
