@@ -2,7 +2,7 @@
   "name": "zhongcao-meihao",
   "version": "1.0.0",
   "private": true,
-  "description": "种草美好：按地点收藏美食与美景，也收藏不在地图上的好剧、好书、人物与主题",
+  "description": "种草美好：按地点收藏美食与美景，也收藏不在地图上的好剧、好书、好物、人物与主题",
   "scripts": {
     "start": "node server.js"
   }
