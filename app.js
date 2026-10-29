@@ -909,8 +909,8 @@ function renderStorage() {
 /* ---------- 设置：私有数据仓库 ---------- */
 function openSettings() {
   const cfg = GH.config || {};
-  $('#setOwner').value = cfg.owner || '';
-  $('#setRepo').value = cfg.repo || '';
+  $('#setOwner').value = cfg.owner || 'wantianxiangsean';
+  $('#setRepo').value = cfg.repo || 'zhongcao-meihao-data';
   $('#setBranch').value = cfg.branch || 'main';
   $('#setPath').value = cfg.path || 'data/data.json';
   $('#setToken').value = cfg.token || '';
@@ -919,7 +919,10 @@ function openSettings() {
   $('#ghDisconnect').hidden = !isGithubMode();
   $('#settingsBackdrop').hidden = false;
   sessionStorage.setItem('interests.settingsSeen', '1');
-  setTimeout(() => $('#setOwner').focus(), 30);
+  setTimeout(() => {
+    const target = $('#setOwner').value && $('#setRepo').value ? $('#setToken') : $('#setOwner');
+    target.focus();
+  }, 30);
 }
 
 function closeSettings() {
