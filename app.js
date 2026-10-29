@@ -515,10 +515,6 @@ function formatTs(ts) {
 function dateStamp(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-function timeStamp(d = new Date()) {
-  const time = `${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
-  return `${dateStamp(d)}-${time}`;
-}
 function todayInput() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -532,6 +528,7 @@ let syncState = 'idle';
 
 function save() {
   dirty = true;
+  if (isGithubMode()) writeLocalCache();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushSave, isGithubMode() ? 900 : 200);
 }
@@ -544,6 +541,8 @@ function setSyncState(next) {
 
 async function storeRead() {
   if (isGithubMode()) {
+    const cached = readLocalCache();
+    if (cached) return cached;
     const data = await ghLoad();
     return data || { version: 1, entries: [], locations: [] };
   }
@@ -595,16 +594,23 @@ async function flushSave() {
 async function loadData() {
   try {
     state.data = await storeRead();
+    if (isGithubMode()) writeLocalCache();
   } catch (err) {
-    state.data = { version: 1, entries: [], locations: [] };
-    if (isGithubMode()) {
-      toast('读取私有仓库失败：' + (err.message || '未知错误'), 'error');
-    } else if (isLocalHost()) {
-      toast('读取数据失败，请用 start.bat 启动服务后再打开页面', 'error');
-    } else if (!sessionStorage.getItem('interests.settingsSeen')) {
-      setTimeout(() => {
-        if (!isGithubMode()) openSettings();
-      }, 500);
+    const cached = isGithubMode() ? readLocalCache() : null;
+    if (cached) {
+      state.data = cached;
+      toast('云端暂时读取失败，已载入本机缓存', 'error');
+    } else {
+      state.data = { version: 1, entries: [], locations: [] };
+      if (isGithubMode()) {
+        toast('读取私有仓库失败：' + (err.message || '未知错误'), 'error');
+      } else if (isLocalHost()) {
+        toast('读取数据失败，请用 start.bat 启动服务后再打开页面', 'error');
+      } else if (!sessionStorage.getItem('interests.settingsSeen')) {
+        setTimeout(() => {
+          if (!isGithubMode()) openSettings();
+        }, 500);
+      }
     }
   }
 
@@ -1040,13 +1046,20 @@ function disconnectGithub() {
 async function runManualCloudBackup() {
   const btn = $('#ghBackup');
   const status = $('#settingsStatus');
+  if (!isGithubMode()) {
+    status.className = 'settings-status error';
+    status.textContent = '请先连接私有数据仓库';
+    return;
+  }
   btn.disabled = true;
   status.className = 'settings-status';
   status.textContent = '正在备份到私有仓库…';
   try {
-    await cloudBackup({ manual: true });
+    writeLocalCache();
+    await ghSave(state.data);
+    setSyncState('saved');
     status.className = 'settings-status ok';
-    status.textContent = '已备份到私有仓库 backups/';
+    status.textContent = '已备份到云端';
     renderCloudStatus();
   } catch (err) {
     status.className = 'settings-status error';
@@ -1057,8 +1070,12 @@ async function runManualCloudBackup() {
 }
 
 async function restoreFromCloud() {
-  if (!isGithubMode()) return;
-  if (!window.confirm('云端版本会覆盖当前浏览器里的收藏（不会删除云端数据）。继续吗？')) return;
+  if (!isGithubMode()) {
+    toast('请先连接私有数据仓库', 'error');
+    openSettings();
+    return;
+  }
+  if (!window.confirm('云端最新数据会覆盖浏览器当前收藏（不会删除云端数据）。继续吗？')) return;
   const status = $('#settingsStatus');
   status.className = 'settings-status';
   status.textContent = '正在读取云端数据…';
@@ -1066,12 +1083,13 @@ async function restoreFromCloud() {
     const data = await ghLoad();
     if (!data) throw new Error('云端还没有数据文件');
     state.data = data;
+    writeLocalCache();
     state.view = { nodeId: 'all', type: 'all', status: 'all', q: '' };
     $('#searchInput').value = '';
     syncState = 'saved';
     renderAll();
     closeSettings();
-    toast('已从云端恢复');
+    toast('已从云端恢复到本地');
   } catch (err) {
     status.className = 'settings-status error';
     status.textContent = err.message || '恢复失败';
@@ -2140,44 +2158,86 @@ async function uploadImage(file) {
   return payload.url;
 }
 
-/* ---------- 备份 ---------- */
-let cloudBackupRunning = false;
+/* ---------- 备份与恢复 ---------- */
+let snapshotRunning = false;
 
-async function cloudBackup({ manual = false } = {}) {
-  if (!isGithubMode()) throw new Error('请先连接私有数据仓库');
-  if (cloudBackupRunning) throw new Error('正在备份，请稍候');
-  cloudBackupRunning = true;
+function localCacheKey() {
+  return GH.config ? `interests.cache.${GH.config.owner}/${GH.config.repo}` : 'interests.cache';
+}
+
+function writeLocalCache() {
+  if (!isGithubMode()) return;
   try {
-    const name = manual
-      ? `${timeStamp()}-${Math.random().toString(36).slice(2, 6)}.json`
-      : `${dateStamp()}.json`;
-    const path = `backups/${name}`;
+    localStorage.setItem(localCacheKey(), JSON.stringify({ savedAt: Date.now(), data: state.data }));
+  } catch (err) {
+    console.warn('写入本机缓存失败', err);
+  }
+}
+
+function readLocalCache() {
+  if (!isGithubMode()) return null;
+  try {
+    const raw = localStorage.getItem(localCacheKey());
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.data || !Array.isArray(parsed.data.entries)) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+async function backupToCloudNow() {
+  if (!isGithubMode()) {
+    toast('请先连接私有数据仓库', 'error');
+    openSettings();
+    return;
+  }
+  const btn = $('#exportBtn');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = icon('upload') + '<span>备份中…</span>';
+  try {
+    writeLocalCache();
+    await ghSave(state.data);
+    setSyncState('saved');
+    toast('已备份到云端');
+  } catch (err) {
+    toast('备份失败：' + (err.message || '未知错误'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
+async function createDailySnapshot() {
+  if (!isGithubMode()) return false;
+  if (snapshotRunning) return false;
+  const today = dateStamp();
+  if (localStorage.getItem('interests.lastCloudBackup') === today) return true;
+  snapshotRunning = true;
+  try {
+    const path = `backups/${today}.json`;
     const url = ghContentsUrl(path);
-
-    if (!manual) {
-      const existing = await ghRequest(url + `?ref=${encodeURIComponent(GH.config.branch)}`, {
-        headers: ghHeaders(),
-      });
-      if (existing.status === 200) {
-        localStorage.setItem('interests.lastCloudBackup', dateStamp());
-        return true;
-      }
-    }
-
-    await ghRequest(url, {
-      method: 'PUT',
-      headers: ghHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        message: `备份收藏 · ${name.replace('.json', '')}`,
-        content: utf8ToBase64(JSON.stringify(state.data, null, 2)),
-        branch: GH.config.branch,
-      }),
+    const existing = await ghRequest(url + `?ref=${encodeURIComponent(GH.config.branch)}`, {
+      headers: ghHeaders(),
     });
-    localStorage.setItem('interests.lastCloudBackup', dateStamp());
+    if (existing.status !== 200) {
+      await ghRequest(url, {
+        method: 'PUT',
+        headers: ghHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          message: `备份收藏 · ${today}`,
+          content: utf8ToBase64(JSON.stringify(state.data, null, 2)),
+          branch: GH.config.branch,
+        }),
+      });
+    }
+    localStorage.setItem('interests.lastCloudBackup', today);
     await pruneCloudBackups();
     return true;
   } finally {
-    cloudBackupRunning = false;
+    snapshotRunning = false;
   }
 }
 
@@ -2206,310 +2266,10 @@ async function pruneCloudBackups(keep = 30) {
 
 async function maybeCloudBackup() {
   if (!isGithubMode()) return;
-  if (localStorage.getItem('interests.lastCloudBackup') === dateStamp()) return;
   try {
-    await cloudBackup({ manual: false });
+    await createDailySnapshot();
   } catch (err) {
     console.warn('自动云端备份失败', err);
-  }
-}
-
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = el('a', { href: url, download: filename });
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error || new Error('读取图片失败'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-/* ---------- ZIP（写入用 store，读取兼容 deflate） ---------- */
-const ZIP_CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let i = 0; i < 256; i += 1) {
-    let c = i;
-    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[i] = c >>> 0;
-  }
-  return table;
-})();
-
-function crc32(bytes) {
-  let c = 0xffffffff;
-  for (let i = 0; i < bytes.length; i += 1) {
-    c = ZIP_CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
-  }
-  return (c ^ 0xffffffff) >>> 0;
-}
-
-function zipDateTime(d = new Date()) {
-  const time = ((d.getHours() & 0x1f) << 11) | ((d.getMinutes() & 0x3f) << 5) | ((d.getSeconds() >> 1) & 0x1f);
-  const date =
-    (((d.getFullYear() - 1980) & 0x7f) << 9) | (((d.getMonth() + 1) & 0x0f) << 5) | (d.getDate() & 0x1f);
-  return { time, date };
-}
-
-function makeZip(entries) {
-  const encoder = new TextEncoder();
-  const parts = [];
-  const central = [];
-  const stamp = zipDateTime();
-  let offset = 0;
-
-  for (const entry of entries) {
-    const nameBytes = encoder.encode(entry.name);
-    const data = entry.data;
-    const crc = crc32(data);
-
-    const local = new Uint8Array(30);
-    const lv = new DataView(local.buffer);
-    lv.setUint32(0, 0x04034b50, true);
-    lv.setUint16(4, 20, true);
-    lv.setUint16(6, 0x0800, true);
-    lv.setUint16(8, 0, true);
-    lv.setUint16(10, stamp.time, true);
-    lv.setUint16(12, stamp.date, true);
-    lv.setUint32(14, crc, true);
-    lv.setUint32(18, data.length, true);
-    lv.setUint32(22, data.length, true);
-    lv.setUint16(26, nameBytes.length, true);
-    lv.setUint16(28, 0, true);
-
-    const cen = new Uint8Array(46);
-    const cv = new DataView(cen.buffer);
-    cv.setUint32(0, 0x02014b50, true);
-    cv.setUint16(4, 20, true);
-    cv.setUint16(6, 20, true);
-    cv.setUint16(8, 0x0800, true);
-    cv.setUint16(10, 0, true);
-    cv.setUint16(12, stamp.time, true);
-    cv.setUint16(14, stamp.date, true);
-    cv.setUint32(16, crc, true);
-    cv.setUint32(20, data.length, true);
-    cv.setUint32(24, data.length, true);
-    cv.setUint16(28, nameBytes.length, true);
-    cv.setUint32(42, offset, true);
-
-    parts.push(local, nameBytes, data);
-    central.push(cen, nameBytes);
-    offset += local.length + nameBytes.length + data.length;
-  }
-
-  let centralSize = 0;
-  for (const part of central) centralSize += part.length;
-
-  const end = new Uint8Array(22);
-  const ev = new DataView(end.buffer);
-  ev.setUint32(0, 0x06054b50, true);
-  ev.setUint16(8, entries.length, true);
-  ev.setUint16(10, entries.length, true);
-  ev.setUint32(12, centralSize, true);
-  ev.setUint32(16, offset, true);
-
-  return new Blob([...parts, ...central, end], { type: 'application/zip' });
-}
-
-async function readZip(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const view = new DataView(buffer);
-  let eocd = -1;
-  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 0xffff); i -= 1) {
-    if (view.getUint32(i, true) === 0x06054b50) {
-      eocd = i;
-      break;
-    }
-  }
-  if (eocd < 0) throw new Error('不是有效的 ZIP 文件');
-
-  const count = view.getUint16(eocd + 10, true);
-  let pointer = view.getUint32(eocd + 16, true);
-  const decoder = new TextDecoder();
-  const files = new Map();
-
-  for (let i = 0; i < count; i += 1) {
-    if (view.getUint32(pointer, true) !== 0x02014b50) throw new Error('ZIP 文件结构损坏');
-    const method = view.getUint16(pointer + 10, true);
-    const compressedSize = view.getUint32(pointer + 20, true);
-    const nameLength = view.getUint16(pointer + 28, true);
-    const extraLength = view.getUint16(pointer + 30, true);
-    const commentLength = view.getUint16(pointer + 32, true);
-    const localOffset = view.getUint32(pointer + 42, true);
-    const name = decoder.decode(bytes.subarray(pointer + 46, pointer + 46 + nameLength));
-
-    const localNameLength = view.getUint16(localOffset + 26, true);
-    const localExtraLength = view.getUint16(localOffset + 28, true);
-    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
-    const raw = bytes.subarray(dataStart, dataStart + compressedSize);
-
-    let data;
-    if (method === 0) {
-      data = raw.slice();
-    } else if (method === 8) {
-      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-      data = new Uint8Array(await new Response(stream).arrayBuffer());
-    } else {
-      throw new Error('ZIP 使用了不支持的压缩方式');
-    }
-    files.set(name, data);
-    pointer += 46 + nameLength + extraLength + commentLength;
-  }
-  return files;
-}
-
-async function imageToDataUrl(src) {
-  if (!src) return null;
-  if (src.startsWith('data:')) return src;
-  if (isGhImage(src)) {
-    const objectUrl = await ghImageUrl(src.slice(GH_IMAGE_PREFIX.length));
-    const res = await fetch(objectUrl);
-    return blobToDataUrl(await res.blob());
-  }
-  const res = await fetch(src);
-  if (!res.ok) throw new Error('图片读取失败');
-  return blobToDataUrl(await res.blob());
-}
-
-async function buildBackupArchive() {
-  const entries = JSON.parse(JSON.stringify(state.data.entries));
-  const zipEntries = [];
-  let imageCount = 0;
-
-  for (const entry of entries) {
-    const image = entry.fields && entry.fields.image;
-    if (!image) continue;
-    try {
-      const dataUrl = await imageToDataUrl(image);
-      const match = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/i.exec(dataUrl || '');
-      if (!match) throw new Error('无法转换图片');
-      const ext = match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
-      const path = `images/${entry.id}.${ext}`;
-      zipEntries.push({ name: path, data: base64ToBytes(match[2]) });
-      entry.fields.image = path;
-      imageCount += 1;
-    } catch (err) {
-      console.warn('备份图片失败', entry.title, err);
-      entry.fields.image = '';
-    }
-  }
-
-  const payload = {
-    version: 1,
-    kind: 'zhongcao-meihao-backup',
-    exportedAt: new Date().toISOString(),
-    entries,
-    locations: JSON.parse(JSON.stringify(state.data.locations)),
-  };
-  zipEntries.unshift({
-    name: 'data.json',
-    data: new TextEncoder().encode(JSON.stringify(payload, null, 2)),
-  });
-
-  return { blob: makeZip(zipEntries), imageCount };
-}
-
-async function exportBackup() {
-  const btn = $('#exportBtn');
-  const original = btn.innerHTML;
-  btn.disabled = true;
-  try {
-    btn.innerHTML = icon('download') + '<span>打包中…</span>';
-    const { blob, imageCount } = await buildBackupArchive();
-    downloadBlob(blob, `种草美好完整备份-${timeStamp()}.zip`);
-    toast(imageCount ? `完整备份已下载（含 ${imageCount} 张图片）` : '完整备份已下载');
-  } catch (err) {
-    toast('备份失败：' + (err.message || '未知错误'), 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = original;
-  }
-}
-
-async function importBackup(file) {
-  try {
-    const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
-    const isZip = /\.zip$/i.test(file.name) || (head[0] === 0x50 && head[1] === 0x4b);
-    let data;
-    let zipMap = null;
-
-    if (isZip) {
-      zipMap = await readZip(await file.arrayBuffer());
-      const manifest = zipMap.get('data.json');
-      if (!manifest) throw new Error('备份包里缺少 data.json');
-      data = JSON.parse(new TextDecoder().decode(manifest));
-    } else {
-      data = JSON.parse(await file.text());
-    }
-
-    if (!data || !Array.isArray(data.entries) || !Array.isArray(data.locations)) {
-      throw new Error('文件格式不正确');
-    }
-
-    const entries = JSON.parse(JSON.stringify(data.entries));
-    const imageCount = entries.filter((e) => e.fields && e.fields.image).length;
-    const ok = window.confirm(
-      `将恢复 ${entries.length} 条收藏、${data.locations.length} 个地点${
-        imageCount ? `、${imageCount} 张图片` : ''
-      }，并覆盖当前数据。\n建议先备份当前数据。继续吗？`
-    );
-    if (!ok) return;
-
-    toast('正在恢复备份…');
-    let uploaded = 0;
-    for (const entry of entries) {
-      if (!entry.fields) entry.fields = {};
-      const image = entry.fields.image;
-      if (!image) continue;
-      try {
-        let blob = null;
-        if (zipMap && zipMap.has(image)) {
-          const bytes = zipMap.get(image);
-          const ext = String(image).split('.').pop().toLowerCase();
-          const type =
-            ext === 'png'
-              ? 'image/png'
-              : ext === 'webp'
-              ? 'image/webp'
-              : ext === 'gif'
-              ? 'image/gif'
-              : 'image/jpeg';
-          blob = new Blob([bytes], { type });
-        } else if (typeof image === 'string' && image.startsWith('data:')) {
-          blob = await (await fetch(image)).blob();
-        } else if (zipMap) {
-          console.warn('备份缺少图片', image);
-          entry.fields.image = '';
-          continue;
-        } else {
-          continue;
-        }
-        const ext = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
-        const restored = new File([blob], `restore.${ext}`, { type: blob.type || 'image/jpeg' });
-        entry.fields.image = await uploadImage(restored);
-        uploaded += 1;
-      } catch (err) {
-        console.warn('恢复图片失败', err);
-        entry.fields.image = '';
-      }
-    }
-
-    const next = { version: 1, entries, locations: data.locations };
-    await storeWrite(next);
-    state.data = next;
-    state.view = { nodeId: 'all', type: 'all', status: 'all', q: '' };
-    $('#searchInput').value = '';
-    renderAll();
-    toast(uploaded ? `恢复完成（图片 ${uploaded} 张）` : '恢复完成');
-  } catch (err) {
-    toast('恢复失败：' + (err.message || '未知错误'), 'error');
   }
 }
 
@@ -2542,8 +2302,8 @@ function bindStaticIcons() {
   $('#editorClose').innerHTML = icon('close');
   $('#settingsClose').innerHTML = icon('close');
   $('#addBtn').innerHTML = icon('plus') + '<span>新收藏</span>';
-  $('#exportBtn').innerHTML = icon('download') + '<span>备份</span>';
-  $('#importBtn').innerHTML = icon('upload') + '<span>恢复</span>';
+  $('#exportBtn').innerHTML = icon('upload') + '<span>备份</span>';
+  $('#importBtn').innerHTML = icon('download') + '<span>恢复</span>';
 }
 
 function bindEvents() {
@@ -2595,13 +2355,8 @@ function bindEvents() {
     if (e.target === e.currentTarget) closeDrawer();
   });
 
-  $('#exportBtn').addEventListener('click', exportBackup);
-  $('#importBtn').addEventListener('click', () => $('#importFile').click());
-  $('#importFile').addEventListener('change', (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (file) importBackup(file);
-    e.target.value = '';
-  });
+  $('#exportBtn').addEventListener('click', backupToCloudNow);
+  $('#importBtn').addEventListener('click', restoreFromCloud);
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
