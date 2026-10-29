@@ -512,6 +512,13 @@ function formatTs(ts) {
   if (Number.isNaN(d.getTime())) return '';
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
 }
+function dateStamp(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function timeStamp(d = new Date()) {
+  const time = `${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
+  return `${dateStamp(d)}-${time}`;
+}
 function todayInput() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -569,6 +576,7 @@ async function flushSave() {
   try {
     await storeWrite(state.data);
     setSyncState('saved');
+    if (isGithubMode()) setTimeout(maybeCloudBackup, 800);
   } catch (err) {
     ok = false;
     dirty = true;
@@ -612,6 +620,8 @@ async function loadData() {
     }
     if (!state.open.size) state.open.add('cn');
   }
+
+  if (isGithubMode()) setTimeout(maybeCloudBackup, 1200);
 }
 
 function persistOpen() {
@@ -917,6 +927,13 @@ function openSettings() {
   $('#settingsStatus').textContent = '';
   $('#settingsStatus').className = 'settings-status';
   $('#ghDisconnect').hidden = !isGithubMode();
+  $('#ghBackup').hidden = !isGithubMode();
+  const lastBackup = localStorage.getItem('interests.lastCloudBackup');
+  $('#backupInfo').textContent = isGithubMode()
+    ? lastBackup
+      ? `最近云端备份：${lastBackup}`
+      : '还没有云端备份'
+    : '';
   $('#settingsBackdrop').hidden = false;
   sessionStorage.setItem('interests.settingsSeen', '1');
   setTimeout(() => {
@@ -1019,6 +1036,25 @@ function disconnectGithub() {
     renderAll();
     toast('已断开私有仓库');
   });
+}
+
+async function runManualCloudBackup() {
+  const btn = $('#ghBackup');
+  const status = $('#settingsStatus');
+  btn.disabled = true;
+  status.className = 'settings-status';
+  status.textContent = '正在备份到私有仓库…';
+  try {
+    await cloudBackup({ manual: true });
+    status.className = 'settings-status ok';
+    status.textContent = '已备份到私有仓库 backups/';
+    $('#backupInfo').textContent = `最近云端备份：${dateStamp()}`;
+  } catch (err) {
+    status.className = 'settings-status error';
+    status.textContent = err.message || '备份失败';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /* ---------- 渲染：主内容 ---------- */
@@ -2051,19 +2087,151 @@ async function uploadImage(file) {
 }
 
 /* ---------- 备份 ---------- */
-async function exportBackup() {
+let cloudBackupRunning = false;
+
+async function cloudBackup({ manual = false } = {}) {
+  if (!isGithubMode()) throw new Error('请先连接私有数据仓库');
+  if (cloudBackupRunning) throw new Error('正在备份，请稍候');
+  cloudBackupRunning = true;
   try {
-    const data = state.data;
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = el('a', { href: url, download: `种草美好备份-${formatTs(Date.now())}.json` });
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast('已导出数据备份');
-  } catch {
-    toast('导出失败', 'error');
+    const name = manual
+      ? `${timeStamp()}-${Math.random().toString(36).slice(2, 6)}.json`
+      : `${dateStamp()}.json`;
+    const path = `backups/${name}`;
+    const url = ghContentsUrl(path);
+
+    if (!manual) {
+      const existing = await ghRequest(url + `?ref=${encodeURIComponent(GH.config.branch)}`, {
+        headers: ghHeaders(),
+      });
+      if (existing.status === 200) {
+        localStorage.setItem('interests.lastCloudBackup', dateStamp());
+        return true;
+      }
+    }
+
+    await ghRequest(url, {
+      method: 'PUT',
+      headers: ghHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        message: `备份收藏 · ${name.replace('.json', '')}`,
+        content: utf8ToBase64(JSON.stringify(state.data, null, 2)),
+        branch: GH.config.branch,
+      }),
+    });
+    localStorage.setItem('interests.lastCloudBackup', dateStamp());
+    await pruneCloudBackups();
+    return true;
+  } finally {
+    cloudBackupRunning = false;
+  }
+}
+
+async function pruneCloudBackups(keep = 30) {
+  try {
+    const res = await ghRequest(ghContentsUrl('backups') + `?ref=${encodeURIComponent(GH.config.branch)}`, {
+      headers: ghHeaders(),
+    });
+    if (res.status === 404) return;
+    const list = await res.json();
+    if (!Array.isArray(list)) return;
+    const files = list
+      .filter((f) => f.type === 'file' && f.name.endsWith('.json'))
+      .sort((a, b) => b.name.localeCompare(a.name));
+    for (const file of files.slice(keep)) {
+      await ghRequest(ghContentsUrl(`backups/${file.name}`), {
+        method: 'DELETE',
+        headers: ghHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ message: `清理旧备份 ${file.name}`, sha: file.sha, branch: GH.config.branch }),
+      });
+    }
+  } catch (err) {
+    console.warn('清理旧备份失败', err);
+  }
+}
+
+async function maybeCloudBackup() {
+  if (!isGithubMode()) return;
+  if (localStorage.getItem('interests.lastCloudBackup') === dateStamp()) return;
+  try {
+    await cloudBackup({ manual: false });
+  } catch (err) {
+    console.warn('自动云端备份失败', err);
+  }
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('读取图片失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function imageToDataUrl(src) {
+  if (!src) return null;
+  if (src.startsWith('data:')) return src;
+  if (isGhImage(src)) {
+    const objectUrl = await ghImageUrl(src.slice(GH_IMAGE_PREFIX.length));
+    const res = await fetch(objectUrl);
+    return blobToDataUrl(await res.blob());
+  }
+  const res = await fetch(src);
+  if (!res.ok) throw new Error('图片读取失败');
+  return blobToDataUrl(await res.blob());
+}
+
+async function buildBackupData() {
+  const entries = JSON.parse(JSON.stringify(state.data.entries));
+  for (const entry of entries) {
+    const image = entry.fields && entry.fields.image;
+    if (!image) continue;
+    try {
+      const dataUrl = await imageToDataUrl(image);
+      if (dataUrl) entry.fields.image = dataUrl;
+    } catch (err) {
+      console.warn('备份图片失败', entry.title, err);
+    }
+  }
+  return {
+    version: 1,
+    kind: 'zhongcao-meihao-backup',
+    exportedAt: new Date().toISOString(),
+    entries,
+    locations: JSON.parse(JSON.stringify(state.data.locations)),
+  };
+}
+
+async function exportBackup() {
+  const btn = $('#exportBtn');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  try {
+    btn.innerHTML = icon('download') + '<span>打包中…</span>';
+    const backup = await buildBackupData();
+    const imageCount = backup.entries.filter(
+      (e) => e.fields && typeof e.fields.image === 'string' && e.fields.image.startsWith('data:')
+    ).length;
+    downloadBlob(
+      new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }),
+      `种草美好完整备份-${timeStamp()}.json`
+    );
+    toast(imageCount ? `备份已下载（含 ${imageCount} 张图片）` : '备份已下载');
+  } catch (err) {
+    toast('备份失败：' + (err.message || '未知错误'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
   }
 }
 
@@ -2074,18 +2242,43 @@ async function importBackup(file) {
     if (!data || !Array.isArray(data.entries) || !Array.isArray(data.locations)) {
       throw new Error('文件格式不正确');
     }
+    const imageCount = data.entries.filter(
+      (e) => e.fields && typeof e.fields.image === 'string' && e.fields.image.startsWith('data:')
+    ).length;
     const ok = window.confirm(
-      `将导入 ${data.entries.length} 条收藏、${data.locations.length} 个地点，并覆盖当前数据。\n建议先导出当前数据备份。继续吗？`
+      `将恢复 ${data.entries.length} 条收藏、${data.locations.length} 个地点${
+        imageCount ? `、${imageCount} 张图片` : ''
+      }，并覆盖当前数据。\n建议先备份当前数据。继续吗？`
     );
     if (!ok) return;
-    const next = { version: 1, entries: data.entries, locations: data.locations };
+
+    const entries = JSON.parse(JSON.stringify(data.entries));
+    let uploaded = 0;
+    for (const entry of entries) {
+      if (!entry.fields) entry.fields = {};
+      const image = entry.fields.image;
+      if (typeof image !== 'string' || !image.startsWith('data:')) continue;
+      try {
+        const blob = await (await fetch(image)).blob();
+        const ext = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+        const restored = new File([blob], `restore.${ext}`, { type: blob.type || 'image/jpeg' });
+        entry.fields.image = await uploadImage(restored);
+        uploaded += 1;
+      } catch (err) {
+        console.warn('恢复图片失败', err);
+        entry.fields.image = '';
+      }
+    }
+
+    const next = { version: 1, entries, locations: data.locations };
     await storeWrite(next);
     state.data = next;
-    state.view.nodeId = 'all';
+    state.view = { nodeId: 'all', type: 'all', status: 'all', q: '' };
+    $('#searchInput').value = '';
     renderAll();
-    toast('导入完成');
+    toast(uploaded ? `恢复完成（图片 ${uploaded} 张）` : '恢复完成');
   } catch (err) {
-    toast('导入失败：' + (err.message || '未知错误'), 'error');
+    toast('恢复失败：' + (err.message || '未知错误'), 'error');
   }
 }
 
@@ -2118,8 +2311,8 @@ function bindStaticIcons() {
   $('#editorClose').innerHTML = icon('close');
   $('#settingsClose').innerHTML = icon('close');
   $('#addBtn').innerHTML = icon('plus') + '<span>新收藏</span>';
-  $('#exportBtn').innerHTML = icon('download') + '<span>导出</span>';
-  $('#importBtn').innerHTML = icon('upload') + '<span>导入</span>';
+  $('#exportBtn').innerHTML = icon('download') + '<span>备份</span>';
+  $('#importBtn').innerHTML = icon('upload') + '<span>恢复</span>';
 }
 
 function bindEvents() {
@@ -2160,6 +2353,7 @@ function bindEvents() {
   });
   $('#ghConnect').addEventListener('click', connectGithub);
   $('#ghDisconnect').addEventListener('click', disconnectGithub);
+  $('#ghBackup').addEventListener('click', runManualCloudBackup);
 
   $('#editorClose').addEventListener('click', closeEditor);
   $('#editorCancel').addEventListener('click', closeEditor);
