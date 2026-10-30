@@ -160,6 +160,7 @@ const TYPES = {
     label: '好书',
     icon: 'book',
     place: false,
+    hideTags: true,
     titleLabel: '书名',
     titlePlaceholder: '书名',
     checkLabel: '读完',
@@ -170,10 +171,10 @@ const TYPES = {
       { key: 'author', label: '作者 / 译者', ph: '如：余华 / 林少华' },
       { key: 'kind', label: '类型', ph: '手动填写，如：小说、非虚构、散文…' },
       { key: 'why', label: '种草来源', type: 'textarea', ph: '从哪里知道这本书…', span: true },
+      { key: 'summary', label: '一句话总结', ph: '用一句话总结这本书…', span: true },
       { key: 'insights', label: '核心观点 · 我的理解', type: 'pairs' },
       { key: 'quote', label: '摘抄 / 印象', type: 'list', ph: '想记住的句子、读完的感受…' },
       { key: 'notes', label: '备注', type: 'textarea', ph: '想推荐给谁、版本提醒…', span: true },
-      { key: 'summary', label: '一句话总结', ph: '用一句话总结这本书…', common: true },
     ],
     cardFields: ['author', 'kind'],
   },
@@ -2022,7 +2023,7 @@ function buildEditorBody() {
       autocomplete: 'off',
     });
     grid.appendChild(fieldEl({ label: commonField.label, span: true }, summaryInput));
-  } else {
+  } else if (!type.hideTags) {
     const tagsInput = el('input', {
       type: 'text',
       name: 'tags',
