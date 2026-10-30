@@ -208,6 +208,8 @@ const TYPES = {
       { key: 'brand', label: '品牌 / 来源', ph: '品牌、店铺或朋友推荐' },
       { key: 'kind', label: '类别', ph: '手动填写，如：厨具、数码…' },
       { key: 'price', label: '价格', ph: '如 ¥199' },
+      { key: 'shareFrom', label: '分享人 from', ph: '谁分享给你的' },
+      { key: 'shareTo', label: '分享 to', ph: '你想分享给谁' },
       { key: 'why', label: '为什么推荐 / 使用感受', type: 'textarea', ph: '用起来怎么样、值不值得…', span: true },
       { key: 'notes', label: '备注', type: 'textarea', ph: '购买渠道、型号、替代品…', span: true },
     ],
