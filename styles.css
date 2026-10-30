@@ -1232,6 +1232,16 @@ body.resizing * {
 }
 .list-head .list-add { padding: 4px 9px; font-size: 11.5px; gap: 4px; }
 .list-head .list-add .ic { width: 12px; height: 12px; }
+.list-field { display: flex; flex-direction: column; gap: 8px; }
+.list-row { display: flex; align-items: flex-start; gap: 8px; }
+.list-row textarea { flex: 1; min-height: 54px; }
+.list-row .list-remove {
+  width: 30px;
+  height: 30px;
+  margin-top: 2px;
+  color: var(--ink-3);
+  flex: none;
+}
 .pair-list { display: flex; flex-direction: column; gap: 10px; }
 .pair-row {
   display: grid;
