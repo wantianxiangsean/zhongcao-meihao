@@ -1373,23 +1373,18 @@ function renderSegs() {
   });
 }
 
-const GRADIENTS = [
-  'linear-gradient(135deg,#c46a4a,#8e3b28)',
-  'linear-gradient(135deg,#7d8a5c,#4c5a3c)',
-  'linear-gradient(135deg,#c39a4e,#8a6526)',
-  'linear-gradient(135deg,#8c7ba8,#5b4c78)',
-  'linear-gradient(135deg,#6f8b96,#3f5b66)',
-  'linear-gradient(135deg,#b5726a,#7d3f46)',
-];
-
-function hashStr(str) {
-  let h = 0;
-  for (let i = 0; i < str.length; i += 1) h = (h * 31 + str.charCodeAt(i)) >>> 0;
-  return h;
-}
+const TYPE_GRADIENTS = {
+  food: 'linear-gradient(135deg,#c46a4a,#8e3b28)',
+  spot: 'linear-gradient(135deg,#7d8a5c,#4c5a3c)',
+  media: 'linear-gradient(135deg,#c39a4e,#8a6526)',
+  book: 'linear-gradient(135deg,#b07b4f,#77482a)',
+  goods: 'linear-gradient(135deg,#b5726a,#7d3f46)',
+  people: 'linear-gradient(135deg,#6f8b96,#3f5b66)',
+  topic: 'linear-gradient(135deg,#8c7ba8,#5b4c78)',
+};
 
 function gradientFor(entry) {
-  return GRADIENTS[hashStr((entry.title || '') + entry.id) % GRADIENTS.length];
+  return TYPE_GRADIENTS[entry.type] || TYPE_GRADIENTS.food;
 }
 
 function starsEl(rating) {
