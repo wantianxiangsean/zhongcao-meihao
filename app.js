@@ -189,6 +189,7 @@ const TYPES = {
     label: '好物',
     icon: 'gift',
     place: false,
+    image: true,
     titleLabel: '物品名称',
     titlePlaceholder: '物品或品牌名称',
     checkLabel: '入手',
@@ -456,6 +457,84 @@ function applyImage(img, src, onError) {
   } else {
     img.src = src;
   }
+}
+
+/* ---------- 图片：裁成 360p 再上传 ---------- */
+const IMAGE_WIDTH = 640;
+const IMAGE_HEIGHT = 360;
+
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const sw0 = img.naturalWidth;
+        const sh0 = img.naturalHeight;
+        if (!sw0 || !sh0) throw new Error('无法读取这张图片');
+        const ratio = IMAGE_WIDTH / IMAGE_HEIGHT;
+        let sw = sw0;
+        let sh = sh0;
+        if (sw0 / sh0 > ratio) sw = Math.round(sh0 * ratio);
+        else sh = Math.round(sw0 / ratio);
+        const sx = Math.round((sw0 - sw) / 2);
+        const sy = Math.round((sh0 - sh) / 2);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = IMAGE_WIDTH;
+        canvas.height = IMAGE_HEIGHT;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
+
+        let quality = 0.8;
+        let result = canvas.toDataURL('image/jpeg', quality);
+        while (result.length > 130000 && quality > 0.45) {
+          quality -= 0.08;
+          result = canvas.toDataURL('image/jpeg', quality);
+        }
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('无法读取这张图片'));
+    };
+    img.src = url;
+  });
+}
+
+async function ghUploadImage(file) {
+  const dataUrl = await compressImage(file);
+  const path = `images/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  await ghRequest(ghContentsUrl(path), {
+    method: 'PUT',
+    headers: ghHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      message: '添加图片',
+      content: dataUrl.split(',')[1],
+      branch: GH.config.branch,
+    }),
+  });
+  return GH_IMAGE_PREFIX + path;
+}
+
+async function uploadImage(file) {
+  if (isGithubMode()) return ghUploadImage(file);
+  const dataUrl = await compressImage(file);
+  const res = await fetch('/api/images', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload.error || '图片上传失败');
+  return payload.url;
 }
 
 let treeEdit = null; // { mode:'add', parentId } | { mode:'rename', id }
@@ -1885,6 +1964,8 @@ function openEditor(options = {}) {
     tags: entry && entry.fields && Array.isArray(entry.fields.tags) ? entry.fields.tags.slice() : [],
     date: entry ? (entry.fields && entry.fields.date) || '' : todayInput(),
     image: (entry && entry.fields && entry.fields.image) || '',
+    file: null,
+    previewUrl: (entry && entry.fields && entry.fields.image) || '',
     values: {},
     locRegion: loc.region,
     locMid: loc.mid,
@@ -1983,6 +2064,8 @@ function buildEditorBody() {
     grid.appendChild(fieldEl({ label: def.label, span: def.span }, input));
   }
 
+  if (type.image) grid.appendChild(buildImageField());
+
   grid.appendChild(el('div', { class: 'form-divider span-2' }));
 
   const ratingField = el('div', { class: 'field' });
@@ -2047,6 +2130,82 @@ function fieldEl({ label, required, span }, input) {
   if (!input.getAttribute('aria-label')) input.setAttribute('aria-label', label);
   field.append(labelEl, input);
   return field;
+}
+
+function buildImageField() {
+  const wrap = el('div', { class: 'field span-2' });
+  const head = el('div', { class: 'list-head' });
+  head.appendChild(el('span', { class: 'label', text: '图片' }));
+  head.appendChild(el('span', { class: 'image-hint', text: '自动裁成 16:9 · 640×360' }));
+  wrap.appendChild(head);
+
+  const inner = el('div', { class: 'image-field' });
+  const preview = el('div', { class: 'image-preview' });
+
+  const renderPreview = () => {
+    preview.innerHTML = '';
+    if (!draft.previewUrl) {
+      preview.classList.add('is-empty');
+      preview.innerHTML = icon('image');
+      return;
+    }
+    preview.classList.remove('is-empty');
+    const img = el('img', { alt: '图片预览' });
+    img.addEventListener(
+      'error',
+      () => {
+        preview.classList.add('is-empty');
+        preview.innerHTML = icon('image');
+      },
+      { once: true }
+    );
+    applyImage(img, draft.previewUrl);
+    preview.appendChild(img);
+  };
+  renderPreview();
+
+  const actions = el('div', { class: 'image-actions' });
+  const fileInput = el('input', { type: 'file', accept: 'image/*', hidden: true });
+  const pick = el('button', { type: 'button', class: 'btn tiny ghost' });
+  pick.innerHTML = icon('upload') + '<span>选择图片</span>';
+  pick.addEventListener('click', () => fileInput.click());
+
+  const remove = el('button', { type: 'button', class: 'btn tiny ghost' });
+  remove.innerHTML = icon('trash') + '<span>移除图片</span>';
+  remove.hidden = !draft.previewUrl;
+
+  const revoke = () => {
+    if (draft.previewUrl && draft.previewUrl.startsWith('blob:')) URL.revokeObjectURL(draft.previewUrl);
+  };
+
+  remove.addEventListener('click', () => {
+    revoke();
+    draft.file = null;
+    draft.image = '';
+    draft.previewUrl = '';
+    fileInput.value = '';
+    remove.hidden = true;
+    renderPreview();
+  });
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast('请选择图片文件', 'error');
+      return;
+    }
+    revoke();
+    draft.file = file;
+    draft.previewUrl = URL.createObjectURL(file);
+    remove.hidden = false;
+    renderPreview();
+  });
+
+  actions.append(pick, remove);
+  inner.append(preview, actions);
+  wrap.append(inner, fileInput);
+  return wrap;
 }
 
 function buildListField(def) {
@@ -2424,11 +2583,19 @@ function switchType(next) {
     tags: draft.tags,
     date: draft.date,
     image: draft.image,
+    file: draft.file,
+    previewUrl: draft.previewUrl,
     locRegion: draft.locRegion,
     locMid: draft.locMid,
     locCity: draft.locCity,
   };
   draft = { ...keep, type: next, values: {} };
+  if (!TYPES[next].image) {
+    if (draft.previewUrl && draft.previewUrl.startsWith('blob:')) URL.revokeObjectURL(draft.previewUrl);
+    draft.image = '';
+    draft.file = null;
+    draft.previewUrl = '';
+  }
   buildEditorBody();
   $('#editorHint').textContent = '';
 }
@@ -2460,7 +2627,13 @@ async function saveEditor() {
   const originalText = saveBtn.textContent;
 
   try {
-    const image = draft.image || '';
+    let image = draft.image || '';
+    if (draft.file) {
+      saveBtn.textContent = '上传图片中…';
+      image = await uploadImage(draft.file);
+      draft.file = null;
+      draft.image = image;
+    }
 
     const fields = {
       rating: draft.rating || 0,
@@ -2555,6 +2728,9 @@ async function saveEditor() {
 }
 
 function closeEditor() {
+  if (draft && draft.previewUrl && draft.previewUrl.startsWith('blob:')) {
+    URL.revokeObjectURL(draft.previewUrl);
+  }
   draft = null;
   $('#editorBackdrop').hidden = true;
   $('#editorBody').innerHTML = '';
