@@ -158,8 +158,15 @@ const TYPES = {
       { key: 'role', label: '身份 / 领域', ph: '如：作家、导演、运动员' },
       { key: 'relation', label: '如何知道', ph: '通过作品、朋友推荐…' },
       { key: 'growth', label: '成长经历', type: 'textarea', ph: '出生、求学、关键转折…', span: true },
-      { key: 'works', label: '作品 / 事迹', type: 'list', ph: '代表作、印象深的事…' },
-      { key: 'why', label: '为什么想记住', type: 'textarea', ph: '哪一点打动了你…', span: true },
+      {
+        key: 'works',
+        label: '作品 / 事迹 · 我的观点',
+        type: 'pairs',
+        leftLabel: '作品 / 事迹',
+        leftPh: '代表作、印象深的事…',
+        rightLabel: '我的观点',
+        rightPh: '你怎么看这件事…',
+      },
       { key: 'notes', label: '备注', type: 'textarea', ph: '想说的话、相关链接…', span: true },
     ],
     cardFields: ['role', 'relation'],
@@ -823,16 +830,50 @@ function migrateSpotPoints(data) {
   });
 }
 
+function migratePeopleWorks(data) {
+  if (!data || !Array.isArray(data.entries)) return;
+  data.entries.forEach((entry) => {
+    if (!entry || entry.type !== 'people' || !entry.fields) return;
+    const raw = entry.fields.works;
+    if (typeof raw === 'string') {
+      const text = raw.trim();
+      if (text) entry.fields.works = [{ point: text, understanding: '' }];
+      else delete entry.fields.works;
+      return;
+    }
+    if (!Array.isArray(raw)) {
+      delete entry.fields.works;
+      return;
+    }
+    const pairs = raw
+      .map((item) => {
+        if (typeof item === 'string') return { point: item, understanding: '' };
+        if (item && typeof item === 'object') {
+          return {
+            point: String(item.point == null ? '' : item.point),
+            understanding: String(item.understanding == null ? '' : item.understanding),
+          };
+        }
+        return null;
+      })
+      .filter((pair) => pair && (pair.point || pair.understanding));
+    if (pairs.length) entry.fields.works = pairs;
+    else delete entry.fields.works;
+  });
+}
+
 async function loadData() {
   try {
     state.data = await storeRead();
     migrateSpotPoints(state.data);
+    migratePeopleWorks(state.data);
     if (isGithubMode()) writeLocalCache();
   } catch (err) {
     const cached = isGithubMode() ? readLocalCache() : null;
     if (cached) {
       state.data = cached;
       migrateSpotPoints(state.data);
+    migratePeopleWorks(state.data);
       toast('云端暂时读取失败，已载入本机缓存', 'error');
     } else {
       state.data = { version: 1, entries: [], locations: [] };
@@ -1320,6 +1361,7 @@ async function restoreFromCloud() {
     const data = await ghLoad();
     if (!data) throw new Error('云端还没有数据文件');
     migrateSpotPoints(data);
+    migratePeopleWorks(data);
     state.data = data;
     writeLocalCache();
     state.view = { nodeId: 'all', type: 'all', status: 'all', q: '' };
@@ -1829,13 +1871,13 @@ function openDrawer(id) {
           const block = el('div', { class: 'insight' });
           if (pair.point) {
             const p = el('p', { class: 'insight-point' });
-            p.appendChild(el('span', { class: 'insight-label', text: '核心观点' }));
+            p.appendChild(el('span', { class: 'insight-label', text: def.leftLabel || '核心观点' }));
             p.appendChild(el('span', { text: pair.point }));
             block.appendChild(p);
           }
           if (pair.understanding) {
             const p = el('p', { class: 'insight-under' });
-            p.appendChild(el('span', { class: 'insight-label', text: '我的理解' }));
+            p.appendChild(el('span', { class: 'insight-label', text: def.rightLabel || '我的理解' }));
             p.appendChild(el('span', { text: pair.understanding }));
             block.appendChild(p);
           }
@@ -2263,23 +2305,25 @@ function buildPairsField(def) {
 
   const list = el('div', { class: 'pair-list' });
   list.dataset.pairs = def.key;
+  const leftLabel = def.leftLabel || '核心观点';
+  const rightLabel = def.rightLabel || '我的理解';
 
   const addRow = (pair = {}, focus = false) => {
     const row = el('div', { class: 'pair-row' });
 
     const left = el('div', { class: 'pair-col' });
-    left.appendChild(el('span', { class: 'pair-label', text: '核心观点' }));
-    const point = el('textarea', { rows: '2', 'aria-label': '核心观点' });
+    left.appendChild(el('span', { class: 'pair-label', text: leftLabel }));
+    const point = el('textarea', { rows: '2', 'aria-label': leftLabel });
     point.dataset.part = 'point';
-    point.placeholder = '一句话概括作者的核心观点…';
+    point.placeholder = def.leftPh || '一句话概括作者的核心观点…';
     point.value = pair.point != null ? String(pair.point) : '';
     left.appendChild(point);
 
     const right = el('div', { class: 'pair-col' });
-    right.appendChild(el('span', { class: 'pair-label', text: '我的理解' }));
-    const understanding = el('textarea', { rows: '2', 'aria-label': '我的理解' });
+    right.appendChild(el('span', { class: 'pair-label', text: rightLabel }));
+    const understanding = el('textarea', { rows: '2', 'aria-label': rightLabel });
     understanding.dataset.part = 'understanding';
-    understanding.placeholder = '与这条观点对应的理解、联想或疑问…';
+    understanding.placeholder = def.rightPh || '与这条观点对应的理解、联想或疑问…';
     understanding.value = pair.understanding != null ? String(pair.understanding) : '';
     right.appendChild(understanding);
 
