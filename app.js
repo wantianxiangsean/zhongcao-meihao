@@ -593,23 +593,6 @@ function scoreEntry(entry, tokens) {
   return score;
 }
 
-function searchAllEntries(query) {
-  const tokens = searchTokens(query);
-  const scope = scopedEntries();
-  if (!tokens.length) {
-    return scope
-      .slice()
-      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-      .slice(0, 10);
-  }
-  return scope
-    .map((entry) => ({ entry, score: scoreEntry(entry, tokens) }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || (b.entry.updatedAt || 0) - (a.entry.updatedAt || 0))
-    .slice(0, 40)
-    .map((item) => item.entry);
-}
-
 function scopedEntries() {
   let list = entriesIn(state.view.nodeId);
   if (state.view.type !== 'all') list = list.filter((e) => e.type === state.view.type);
@@ -1627,74 +1610,17 @@ function clearFilters() {
   renderMain();
 }
 
-/* ---------- 全局搜索 ---------- */
-function currentSearchScope() {
-  const parts = [];
-  if (state.view.nodeId !== 'all') {
-    const node = getNode(state.view.nodeId);
-    if (node) parts.push(node.name);
-  }
-  if (state.view.type !== 'all' && TYPES[state.view.type]) parts.push(TYPES[state.view.type].label);
-  if (state.view.status === 'done') parts.push('已打卡');
-  if (state.view.status === 'todo') parts.push('待打卡');
-  return parts.length ? parts.join(' · ') : '全部收藏';
-}
-
-function updateSearchScope() {
-  const scope = currentSearchScope();
-  const scopeEl = $('#searchScope');
-  if (scopeEl) scopeEl.textContent = `搜索范围：${scope}`;
-  const input = $('#paletteInput');
-  if (input) {
-    input.placeholder = scope === '全部收藏' ? '搜索全部收藏…' : `在 ${scope} 中搜索…`;
-  }
-}
-
-function openSearchPalette() {
-  updateSearchScope();
-  $('#paletteInput').value = '';
-  renderSearchResults();
-  $('#searchBackdrop').hidden = false;
-  setTimeout(() => $('#paletteInput').focus(), 20);
-}
-
-function closeSearchPalette() {
-  $('#searchBackdrop').hidden = true;
-}
-
-function renderSearchResults() {
-  const box = $('#searchResults');
-  const entries = searchAllEntries($('#paletteInput').value);
-  box.innerHTML = '';
-  if (!entries.length) {
-    box.appendChild(el('div', { class: 'search-empty', text: '没有找到匹配的收藏' }));
-    return;
-  }
-  const frag = document.createDocumentFragment();
-  for (const entry of entries) {
-    const type = TYPES[entry.type] || TYPES.food;
-    const row = el('button', { type: 'button', class: 'search-result' });
-    row.appendChild(el('span', { class: 'pill ' + entry.type, text: type.label }));
-    row.appendChild(el('span', { class: 'sr-title', text: entry.title }));
-    row.appendChild(
-      el('span', {
-        class: 'sr-meta',
-        text: entry.locationId ? pathNames(entry.locationId).join(' / ') : '无地点',
-      })
-    );
-    row.addEventListener('click', () => {
-      closeSearchPalette();
-      openDrawer(entry.id);
-    });
-    frag.appendChild(row);
-  }
-  box.appendChild(frag);
-}
-
 function isEditableTarget(target) {
   if (!target) return false;
   const tag = target.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+function focusSearch() {
+  const input = $('#searchInput');
+  if (!input) return;
+  input.focus();
+  input.select();
 }
 
 /* ---------- 侧栏宽度 ---------- */
@@ -2787,13 +2713,6 @@ function bindStaticIcons() {
   $('#sidebarClose').innerHTML = icon('close');
   $('#editorClose').innerHTML = icon('close');
   $('#settingsClose').innerHTML = icon('close');
-  $('#searchEntryIcon').innerHTML = icon('search');
-  $('#paletteIcon').innerHTML = icon('search');
-  $('#paletteClose').innerHTML = icon('close');
-  if (/Mac|iPhone|iPad/.test(navigator.platform)) {
-    const kbd = $('.search-entry kbd');
-    if (kbd) kbd.textContent = '⌘ K';
-  }
   $('#addBtn').innerHTML = icon('plus') + '<span>新收藏</span>';
   $('#exportBtn').innerHTML = icon('upload') + '<span>备份</span>';
   $('#importBtn').innerHTML = icon('download') + '<span>恢复</span>';
@@ -2844,24 +2763,6 @@ function bindEvents() {
   $('#editorCancel').addEventListener('click', closeEditor);
   $('#editorSave').addEventListener('click', saveEditor);
 
-  $('#searchEntry').addEventListener('click', openSearchPalette);
-  $('#paletteClose').addEventListener('click', closeSearchPalette);
-  $('#searchBackdrop').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) closeSearchPalette();
-  });
-  $('#paletteInput').addEventListener('input', renderSearchResults);
-  $('#paletteInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const first = $('#searchResults .search-result');
-      if (first) first.click();
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const first = $('#searchResults .search-result');
-      if (first) first.focus();
-    }
-  });
-
   $('#drawerBackdrop').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeDrawer();
   });
@@ -2872,20 +2773,15 @@ function bindEvents() {
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
       e.preventDefault();
-      if ($('#searchBackdrop').hidden) openSearchPalette();
-      else closeSearchPalette();
+      focusSearch();
       return;
     }
     if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey && !isEditableTarget(e.target)) {
       e.preventDefault();
-      if ($('#searchBackdrop').hidden) openSearchPalette();
+      focusSearch();
       return;
     }
     if (e.key !== 'Escape') return;
-    if (!$('#searchBackdrop').hidden) {
-      closeSearchPalette();
-      return;
-    }
     if (!$('#editorBackdrop').hidden) {
       closeEditor();
       return;
