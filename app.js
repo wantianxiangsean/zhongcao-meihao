@@ -90,11 +90,18 @@ const TYPES = {
     checkHint: '去过就勾上',
     dateLabel: '到访日期',
     fields: [
-      { key: 'spotAddress', label: '打卡地点', ph: '景区入口 / 观景台 / 具体位置', span: true },
+      {
+        key: 'spotAddress',
+        label: '打卡点',
+        type: 'chips',
+        ph: '好吃的、好玩的',
+        parts: [
+          { key: 'food', label: '好吃的', ph: '如：巷口的糖水铺' },
+          { key: 'fun', label: '好玩的', ph: '如：看日落、坐船' },
+        ],
+      },
       { key: 'story', label: '故事 / 印象', type: 'textarea', ph: '为什么值得来，当时发生了什么…', span: true },
-      { key: 'stay', label: '住宿', ph: '住哪里、体验如何' },
-      { key: 'food', label: '饮食', ph: '附近好吃的' },
-      { key: 'fun', label: '好玩的', type: 'textarea', ph: '项目、路线、最佳时段…', span: true },
+      { key: 'stay', label: '住宿', ph: '住哪里、体验如何', span: true },
       { key: 'notes', label: '备注', type: 'textarea', ph: '交通、门票、提醒…', span: true },
     ],
     cardFields: ['spotAddress'],
@@ -709,14 +716,60 @@ async function flushSave() {
   }
 }
 
+function bitText(item) {
+  if (item == null) return '';
+  if (typeof item !== 'object') return String(item);
+  return String(item.name || item.point || Object.values(item).filter(Boolean).join(' '));
+}
+
+function migrateSpotPoints(data) {
+  if (!data || !Array.isArray(data.entries)) return;
+  data.entries.forEach((entry) => {
+    if (!entry || entry.type !== 'spot' || !entry.fields) return;
+    const fields = entry.fields;
+    const legacy = {};
+    ['food', 'fun'].forEach((key) => {
+      if (typeof fields[key] === 'string' && fields[key].trim()) legacy[key] = fields[key].trim();
+      delete fields[key];
+    });
+    let points = fields.spotAddress;
+    if (typeof points === 'string') points = points.trim() ? [{ name: points.trim() }] : [];
+    if (!Array.isArray(points)) points = [];
+    points = points
+      .map((point) => {
+        if (point && typeof point === 'object') {
+          return {
+            name: String(point.name == null ? '' : point.name),
+            food: String(point.food == null ? '' : point.food),
+            fun: String(point.fun == null ? '' : point.fun),
+          };
+        }
+        return { name: String(point == null ? '' : point), food: '', fun: '' };
+      })
+      .filter((point) => point.name || point.food || point.fun);
+    if (legacy.food || legacy.fun) {
+      if (points.length) {
+        if (!points[0].food) points[0].food = legacy.food || '';
+        if (!points[0].fun) points[0].fun = legacy.fun || '';
+      } else {
+        points.push({ name: '', food: legacy.food || '', fun: legacy.fun || '' });
+      }
+    }
+    if (points.length) fields.spotAddress = points;
+    else delete fields.spotAddress;
+  });
+}
+
 async function loadData() {
   try {
     state.data = await storeRead();
+    migrateSpotPoints(state.data);
     if (isGithubMode()) writeLocalCache();
   } catch (err) {
     const cached = isGithubMode() ? readLocalCache() : null;
     if (cached) {
       state.data = cached;
+      migrateSpotPoints(state.data);
       toast('云端暂时读取失败，已载入本机缓存', 'error');
     } else {
       state.data = { version: 1, entries: [], locations: [] };
@@ -1203,6 +1256,7 @@ async function restoreFromCloud() {
   try {
     const data = await ghLoad();
     if (!data) throw new Error('云端还没有数据文件');
+    migrateSpotPoints(data);
     state.data = data;
     writeLocalCache();
     state.view = { nodeId: 'all', type: 'all', status: 'all', q: '' };
@@ -1424,7 +1478,7 @@ function cardEl(entry) {
   const bits = type.cardFields.map((k) => entry.fields && entry.fields[k]).filter(Boolean);
   bits.forEach((bit) => {
     if (!first) meta.appendChild(el('span', { class: 'sep', text: '·' }));
-    meta.appendChild(el('span', { text: String(bit) }));
+    meta.appendChild(el('span', { text: Array.isArray(bit) ? bit.map(bitText).join(' / ') : String(bit) }));
     first = false;
   });
   body.appendChild(meta);
@@ -1786,6 +1840,24 @@ function openDrawer(id) {
           }
           dd.appendChild(block);
         });
+      } else if (def.type === 'chips') {
+        const box = el('div', { class: 'point-list' });
+        const parts = def.parts || [];
+        value.forEach((rawPoint) => {
+          const point = rawPoint && typeof rawPoint === 'object' ? rawPoint : { name: rawPoint };
+          if (!point.name && !parts.some((part) => point[part.key])) return;
+          const card = el('div', { class: 'point-card' });
+          if (point.name) card.appendChild(el('div', { class: 'point-name', text: String(point.name) }));
+          parts.forEach((part) => {
+            if (!point[part.key]) return;
+            const line = el('p', { class: 'point-line' });
+            line.appendChild(el('span', { class: 'point-label', text: part.label }));
+            line.appendChild(el('span', { text: String(point[part.key]) }));
+            card.appendChild(line);
+          });
+          box.appendChild(card);
+        });
+        dd.appendChild(box);
       } else {
         const list = el('ul', { class: 'fact-list' });
         value.forEach((item) => list.appendChild(el('li', { text: String(item) })));
@@ -1963,6 +2035,10 @@ function buildEditorBody() {
     }
     if (def.type === 'pairs') {
       grid.appendChild(buildPairsField(def));
+      continue;
+    }
+    if (def.type === 'chips') {
+      grid.appendChild(buildChipsField(def));
       continue;
     }
     let input;
@@ -2155,6 +2231,86 @@ function buildPairsField(def) {
   return field;
 }
 
+function buildChipsField(def) {
+  const field = el('div', { class: 'field span-2' });
+  const head = el('div', { class: 'list-head' });
+  head.appendChild(el('span', { class: 'label', text: def.label }));
+  const addBtn = el('button', { type: 'button', class: 'btn tiny ghost list-add' });
+  addBtn.innerHTML = icon('plus') + '<span>新增</span>';
+  head.appendChild(addBtn);
+  field.appendChild(head);
+
+  const list = el('div', { class: 'chip-field' });
+  list.dataset.chips = def.key;
+  const parts = def.parts || [];
+
+  const addRow = (point = {}, focus = false) => {
+    const row = el('div', { class: 'chip-card' });
+
+    const cardHead = el('div', { class: 'chip-card-head' });
+    const input = el('input', {
+      type: 'text',
+      'aria-label': def.label,
+      placeholder: def.ph || '',
+      autocomplete: 'off',
+    });
+    input.dataset.part = 'name';
+    input.value = point.name != null ? String(point.name) : '';
+    const remove = el('button', {
+      type: 'button',
+      class: 'icon-btn list-remove',
+      'aria-label': '删除这个打卡点',
+      title: '删除',
+    });
+    remove.innerHTML = icon('trash');
+    remove.addEventListener('click', () => {
+      const filled = [...row.querySelectorAll('input')].some((input) => input.value.trim());
+      if (filled && !window.confirm('删除这个打卡点？')) return;
+      row.remove();
+      if (!list.querySelector('.chip-card')) addRow({}, false);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (input.value.trim()) addRow({}, true);
+    });
+    cardHead.append(input, remove);
+    row.appendChild(cardHead);
+
+    parts.forEach((part) => {
+      const line = el('label', { class: 'chip-part' });
+      line.appendChild(el('span', { class: 'chip-part-label', text: part.label }));
+      const partInput = el('input', {
+        type: 'text',
+        'aria-label': part.label,
+        placeholder: part.ph || '',
+        autocomplete: 'off',
+      });
+      partInput.dataset.part = part.key;
+      partInput.value = point[part.key] != null ? String(point[part.key]) : '';
+      line.appendChild(partInput);
+      row.appendChild(line);
+    });
+
+    list.appendChild(row);
+    if (focus) input.focus();
+  };
+
+  const raw = draft.values[def.key];
+  const initial = Array.isArray(raw) ? raw : raw ? [String(raw)] : [];
+  if (initial.length) {
+    initial.forEach((point) =>
+      addRow(point && typeof point === 'object' ? point : { name: String(point) })
+    );
+  } else {
+    addRow({});
+  }
+
+  addBtn.addEventListener('click', () => addRow({}, true));
+  field.appendChild(list);
+  return field;
+}
+
 function updateRating(box) {
   [...box.querySelectorAll('button[title]')].forEach((b, idx) => {
     b.classList.toggle('on', idx + 1 <= draft.rating);
@@ -2314,6 +2470,17 @@ function readDraftFromForm() {
       }));
       continue;
     }
+    if (def.type === 'chips') {
+      const rows = body.querySelectorAll(`[data-chips="${def.key}"] .chip-card`);
+      draft.values[def.key] = [...rows].map((row) => {
+        const point = {};
+        row.querySelectorAll('[data-part]').forEach((input) => {
+          point[input.dataset.part] = input.value;
+        });
+        return point;
+      });
+      continue;
+    }
     const input = body.querySelector(`[name="${def.key}"]`);
     if (input) draft.values[def.key] = input.value;
   }
@@ -2387,6 +2554,21 @@ async function saveEditor() {
           .map((value) => String(value).trim())
           .filter(Boolean);
         if (values.length) fields[def.key] = values;
+        continue;
+      }
+      if (def.type === 'chips') {
+        const keys = ['name', ...(def.parts || []).map((part) => part.key)];
+        const points = (Array.isArray(raw) ? raw : raw ? [raw] : [])
+          .map((point) => {
+            const item = point && typeof point === 'object' ? point : { name: point };
+            const out = {};
+            keys.forEach((key) => {
+              out[key] = String(item[key] == null ? '' : item[key]).trim();
+            });
+            return out;
+          })
+          .filter((point) => keys.some((key) => point[key]));
+        if (points.length) fields[def.key] = points;
         continue;
       }
       if (def.type === 'pairs') {
