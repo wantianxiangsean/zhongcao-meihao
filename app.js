@@ -157,7 +157,8 @@ const TYPES = {
     fields: [
       { key: 'role', label: '身份 / 领域', ph: '如：作家、导演、运动员' },
       { key: 'relation', label: '如何知道', ph: '通过作品、朋友推荐…' },
-      { key: 'works', label: '作品 / 事迹', type: 'textarea', ph: '代表作、印象深的事…', span: true },
+      { key: 'growth', label: '成长经历', type: 'textarea', ph: '出生、求学、关键转折…', span: true },
+      { key: 'works', label: '作品 / 事迹', type: 'list', ph: '代表作、印象深的事…' },
       { key: 'why', label: '为什么想记住', type: 'textarea', ph: '哪一点打动了你…', span: true },
       { key: 'notes', label: '备注', type: 'textarea', ph: '想说的话、相关链接…', span: true },
     ],
