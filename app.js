@@ -161,7 +161,7 @@ const TYPES = {
     icon: 'book',
     place: false,
     titleLabel: '书名',
-    titlePlaceholder: '书名 / 作者',
+    titlePlaceholder: '书名',
     checkLabel: '读完',
     checkDone: '已读完',
     checkHint: '读完就勾上',
@@ -169,9 +169,11 @@ const TYPES = {
     fields: [
       { key: 'author', label: '作者 / 译者', ph: '如：余华 / 林少华' },
       { key: 'kind', label: '类型', ph: '手动填写，如：小说、非虚构、散文…' },
+      { key: 'why', label: '种草来源', type: 'textarea', ph: '从哪里知道这本书…', span: true },
+      { key: 'insights', label: '核心观点 · 我的理解', type: 'pairs' },
       { key: 'quote', label: '摘抄 / 印象', type: 'textarea', ph: '想记住的句子、读完的感受…', span: true },
-      { key: 'why', label: '为什么想读', type: 'textarea', ph: '从哪里知道这本书…', span: true },
       { key: 'notes', label: '备注', type: 'textarea', ph: '想推荐给谁、版本提醒…', span: true },
+      { key: 'summary', label: '一句话总结', ph: '用一句话总结这本书…', common: true },
     ],
     cardFields: ['author', 'kind'],
   },
@@ -408,20 +410,6 @@ async function ghSaveContent(content, count, attempt) {
   }
 }
 
-async function ghUploadImage(file) {
-  const dataUrl = await compressImage(file);
-  const match = /^data:image\/(png|jpeg|webp|gif);base64,(.+)$/.exec(dataUrl);
-  if (!match) throw new Error('图片格式不支持');
-  const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-  const path = `images/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  await ghRequest(ghContentsUrl(path), {
-    method: 'PUT',
-    headers: ghHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ message: '添加图片', content: match[2], branch: GH.config.branch }),
-  });
-  return GH_IMAGE_PREFIX + path;
-}
-
 function isGhImage(src) {
   return typeof src === 'string' && src.startsWith(GH_IMAGE_PREFIX);
 }
@@ -562,7 +550,17 @@ function searchText(entry) {
     parts.push(type.label);
     for (const def of type.fields) {
       const v = entry.fields && entry.fields[def.key];
-      if (v) parts.push(String(v));
+      if (v) {
+        parts.push(
+          Array.isArray(v)
+            ? v
+                .map((item) =>
+                  item && typeof item === 'object' ? Object.values(item).join(' ') : String(item)
+                )
+                .join(' ')
+            : String(v)
+        );
+      }
     }
   }
   if (entry.fields && Array.isArray(entry.fields.tags)) parts.push(entry.fields.tags.join(' '));
@@ -1764,10 +1762,38 @@ function openDrawer(id) {
   let hasFacts = false;
   for (const def of type.fields) {
     const value = entry.fields && entry.fields[def.key];
-    if (!value) continue;
+    if (!value || (Array.isArray(value) && !value.length)) continue;
     hasFacts = true;
     facts.appendChild(el('dt', { text: def.label }));
-    facts.appendChild(el('dd', { text: String(value) }));
+    if (Array.isArray(value)) {
+      const dd = el('dd');
+      if (def.type === 'pairs') {
+        value.forEach((pair) => {
+          if (!pair || (!pair.point && !pair.understanding)) return;
+          const block = el('div', { class: 'insight' });
+          if (pair.point) {
+            const p = el('p', { class: 'insight-point' });
+            p.appendChild(el('span', { class: 'insight-label', text: '核心观点' }));
+            p.appendChild(el('span', { text: pair.point }));
+            block.appendChild(p);
+          }
+          if (pair.understanding) {
+            const p = el('p', { class: 'insight-under' });
+            p.appendChild(el('span', { class: 'insight-label', text: '我的理解' }));
+            p.appendChild(el('span', { text: pair.understanding }));
+            block.appendChild(p);
+          }
+          dd.appendChild(block);
+        });
+      } else {
+        const list = el('ul', { class: 'fact-list' });
+        value.forEach((item) => list.appendChild(el('li', { text: String(item) })));
+        dd.appendChild(list);
+      }
+      facts.appendChild(dd);
+    } else {
+      facts.appendChild(el('dd', { text: String(value) }));
+    }
   }
   if (entry.fields && entry.fields.date) {
     hasFacts = true;
@@ -1865,8 +1891,6 @@ function openEditor(options = {}) {
     tags: entry && entry.fields && Array.isArray(entry.fields.tags) ? entry.fields.tags.slice() : [],
     date: entry ? (entry.fields && entry.fields.date) || '' : todayInput(),
     image: (entry && entry.fields && entry.fields.image) || '',
-    previewUrl: (entry && entry.fields && entry.fields.image) || '',
-    file: null,
     values: {},
     locRegion: loc.region,
     locMid: loc.mid,
@@ -1931,6 +1955,11 @@ function buildEditorBody() {
   }
 
   for (const def of type.fields) {
+    if (def.common) continue;
+    if (def.type === 'pairs') {
+      grid.appendChild(buildPairsField(def));
+      continue;
+    }
     let input;
     if (def.type === 'textarea') {
       input = el('textarea', { name: def.key, placeholder: def.ph || '', rows: '2' });
@@ -1979,16 +2008,26 @@ function buildEditorBody() {
   draft.date = dateInput.value;
   grid.appendChild(fieldEl({ label: type.dateLabel }, dateInput));
 
-  const tagsInput = el('input', {
-    type: 'text',
-    name: 'tags',
-    value: draft.tags.join('，'),
-    placeholder: '用逗号分隔，如：川菜，性价比高',
-    autocomplete: 'off',
-  });
-  grid.appendChild(fieldEl({ label: '标签', span: true }, tagsInput));
-
-  grid.appendChild(buildImageField());
+  const commonField = type.fields.find((def) => def.common);
+  if (commonField) {
+    const summaryInput = el('input', {
+      type: 'text',
+      name: commonField.key,
+      value: draft.values[commonField.key] || '',
+      placeholder: commonField.ph || '',
+      autocomplete: 'off',
+    });
+    grid.appendChild(fieldEl({ label: commonField.label, span: true }, summaryInput));
+  } else {
+    const tagsInput = el('input', {
+      type: 'text',
+      name: 'tags',
+      value: draft.tags.join('，'),
+      placeholder: '用逗号分隔，如：川菜，性价比高',
+      autocomplete: 'off',
+    });
+    grid.appendChild(fieldEl({ label: '标签', span: true }, tagsInput));
+  }
 
   const checkLine = el('label', { class: 'check-line span-2' });
   const cb = el('input', { type: 'checkbox', name: 'checked' });
@@ -2005,6 +2044,66 @@ function fieldEl({ label, required, span }, input) {
   const labelEl = el('span', { class: 'label', html: label + (required ? '<span class="req">*</span>' : '') });
   if (!input.getAttribute('aria-label')) input.setAttribute('aria-label', label);
   field.append(labelEl, input);
+  return field;
+}
+
+function buildPairsField(def) {
+  const field = el('div', { class: 'field span-2' });
+  const head = el('div', { class: 'list-head' });
+  head.appendChild(el('span', { class: 'label', text: def.label }));
+  const addBtn = el('button', { type: 'button', class: 'btn tiny ghost list-add' });
+  addBtn.innerHTML = icon('plus') + '<span>新增</span>';
+  head.appendChild(addBtn);
+  field.appendChild(head);
+
+  const list = el('div', { class: 'pair-list' });
+  list.dataset.pairs = def.key;
+
+  const addRow = (pair = {}, focus = false) => {
+    const row = el('div', { class: 'pair-row' });
+
+    const left = el('div', { class: 'pair-col' });
+    left.appendChild(el('span', { class: 'pair-label', text: '核心观点' }));
+    const point = el('textarea', { rows: '2', 'aria-label': '核心观点' });
+    point.dataset.part = 'point';
+    point.placeholder = '一句话概括作者的核心观点…';
+    point.value = pair.point != null ? String(pair.point) : '';
+    left.appendChild(point);
+
+    const right = el('div', { class: 'pair-col' });
+    right.appendChild(el('span', { class: 'pair-label', text: '我的理解' }));
+    const understanding = el('textarea', { rows: '2', 'aria-label': '我的理解' });
+    understanding.dataset.part = 'understanding';
+    understanding.placeholder = '与这条观点对应的理解、联想或疑问…';
+    understanding.value = pair.understanding != null ? String(pair.understanding) : '';
+    right.appendChild(understanding);
+
+    const remove = el('button', {
+      type: 'button',
+      class: 'icon-btn list-remove',
+      'aria-label': '删除这一组',
+      title: '删除这一组',
+    });
+    remove.innerHTML = icon('trash');
+    remove.addEventListener('click', () => {
+      row.remove();
+      if (!list.querySelector('.pair-row')) addRow({}, false);
+    });
+
+    row.append(left, right, remove);
+    list.appendChild(row);
+    if (focus) point.focus();
+  };
+
+  const initial = Array.isArray(draft.values[def.key]) ? draft.values[def.key] : [];
+  if (initial.length) {
+    initial.forEach((pair) => addRow(pair && typeof pair === 'object' ? pair : {}));
+  } else {
+    addRow({});
+  }
+
+  addBtn.addEventListener('click', () => addRow({}, true));
+  field.appendChild(list);
   return field;
 }
 
@@ -2142,70 +2241,6 @@ function showInlineAdd(anchor, placeholder, commit) {
   input.focus();
 }
 
-function buildImageField() {
-  const wrap = el('div', { class: 'field span-2' });
-  wrap.appendChild(el('span', { class: 'label', text: '图片' }));
-
-  const inner = el('div', { class: 'image-field' });
-  const preview = el('div', { class: 'image-preview' });
-  const renderPreview = () => {
-    preview.innerHTML = '';
-    if (!draft.previewUrl) {
-      preview.innerHTML = icon('image');
-      return;
-    }
-    const img = el('img', { alt: '' });
-    img.addEventListener(
-      'error',
-      () => {
-        preview.innerHTML = icon('image');
-      },
-      { once: true }
-    );
-    applyImage(img, draft.previewUrl);
-    preview.appendChild(img);
-  };
-  renderPreview();
-
-  const actions = el('div', { class: 'image-actions' });
-  const fileInput = el('input', { type: 'file', accept: 'image/*', hidden: true });
-  const pick = el('button', { type: 'button', class: 'btn tiny ghost' });
-  pick.innerHTML = icon('upload') + '<span>选择图片</span>';
-  pick.addEventListener('click', () => fileInput.click());
-
-  const remove = el('button', { type: 'button', class: 'btn tiny ghost' });
-  remove.innerHTML = icon('trash') + '<span>移除图片</span>';
-  remove.hidden = !draft.previewUrl;
-  remove.addEventListener('click', () => {
-    draft.file = null;
-    draft.image = '';
-    if (draft.previewUrl && draft.previewUrl.startsWith('blob:')) URL.revokeObjectURL(draft.previewUrl);
-    draft.previewUrl = '';
-    fileInput.value = '';
-    renderPreview();
-    remove.hidden = true;
-  });
-
-  fileInput.addEventListener('change', () => {
-    const file = fileInput.files && fileInput.files[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast('请选择图片文件', 'error');
-      return;
-    }
-    if (draft.previewUrl && draft.previewUrl.startsWith('blob:')) URL.revokeObjectURL(draft.previewUrl);
-    draft.file = file;
-    draft.previewUrl = URL.createObjectURL(file);
-    renderPreview();
-    remove.hidden = false;
-  });
-
-  actions.append(pick, fileInput, remove);
-  inner.append(preview, actions);
-  wrap.appendChild(inner);
-  return wrap;
-}
-
 function readDraftFromForm() {
   if (!draft) return;
   const body = $('#editorBody');
@@ -2218,6 +2253,14 @@ function readDraftFromForm() {
   const checked = body.querySelector('[name="checked"]');
   if (checked) draft.checked = checked.checked;
   for (const def of TYPES[draft.type].fields) {
+    if (def.type === 'pairs') {
+      const rows = body.querySelectorAll(`[data-pairs="${def.key}"] .pair-row`);
+      draft.values[def.key] = [...rows].map((row) => ({
+        point: row.querySelector('[data-part="point"]')?.value || '',
+        understanding: row.querySelector('[data-part="understanding"]')?.value || '',
+      }));
+      continue;
+    }
     const input = body.querySelector(`[name="${def.key}"]`);
     if (input) draft.values[def.key] = input.value;
   }
@@ -2240,8 +2283,6 @@ function switchType(next) {
     tags: draft.tags,
     date: draft.date,
     image: draft.image,
-    previewUrl: draft.previewUrl,
-    file: draft.file,
     locRegion: draft.locRegion,
     locMid: draft.locMid,
     locCity: draft.locCity,
@@ -2278,11 +2319,7 @@ async function saveEditor() {
   const originalText = saveBtn.textContent;
 
   try {
-    let image = draft.image || '';
-    if (draft.file) {
-      saveBtn.textContent = '上传图片…';
-      image = await uploadImage(draft.file);
-    }
+    const image = draft.image || '';
 
     const fields = {
       rating: draft.rating || 0,
@@ -2291,7 +2328,18 @@ async function saveEditor() {
       image,
     };
     for (const def of TYPES[draft.type].fields) {
-      const value = (draft.values[def.key] || '').trim();
+      const raw = draft.values[def.key];
+      if (def.type === 'pairs') {
+        const pairs = (Array.isArray(raw) ? raw : [])
+          .map((pair) => ({
+            point: String((pair && pair.point) || '').trim(),
+            understanding: String((pair && pair.understanding) || '').trim(),
+          }))
+          .filter((pair) => pair.point || pair.understanding);
+        if (pairs.length) fields[def.key] = pairs;
+        continue;
+      }
+      const value = String(raw == null ? '' : raw).trim();
       if (value) fields[def.key] = value;
     }
 
@@ -2344,68 +2392,10 @@ async function saveEditor() {
 }
 
 function closeEditor() {
-  if (draft && draft.previewUrl && draft.previewUrl.startsWith('blob:')) {
-    URL.revokeObjectURL(draft.previewUrl);
-  }
   draft = null;
   $('#editorBackdrop').hidden = true;
   $('#editorBody').innerHTML = '';
   $('#editorHint').textContent = '';
-}
-
-/* ---------- 图片 ---------- */
-function compressImage(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const max = 1400;
-        let width = img.naturalWidth;
-        let height = img.naturalHeight;
-        const scale = Math.min(1, max / Math.max(width, height));
-        width = Math.max(1, Math.round(width * scale));
-        height = Math.max(1, Math.round(height * scale));
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, width, height);
-        ctx.drawImage(img, 0, 0, width, height);
-
-        const mime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-        let result = canvas.toDataURL(mime, 0.82);
-        if (mime === 'image/png' && result.length > 400000) {
-          result = canvas.toDataURL('image/jpeg', 0.85);
-        }
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('无法读取这张图片'));
-    };
-    img.src = url;
-  });
-}
-
-async function uploadImage(file) {
-  if (isGithubMode()) return ghUploadImage(file);
-  const dataUrl = await compressImage(file);
-  const res = await fetch('/api/images', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataUrl }),
-  });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(payload.error || '图片上传失败');
-  return payload.url;
 }
 
 /* ---------- 备份与恢复 ---------- */
