@@ -960,6 +960,28 @@ function deleteLocation(id) {
 }
 
 /* ---------- 渲染：侧边栏 ---------- */
+function viewWouldShow(entry) {
+  if (!entriesIn(state.view.nodeId).includes(entry)) return false;
+  if (state.view.type !== 'all' && entry.type !== state.view.type) return false;
+  if (state.view.status === 'done' && !entry.checked) return false;
+  if (state.view.status === 'todo' && entry.checked) return false;
+  if (state.view.q.trim()) {
+    const tokens = searchTokens(state.view.q);
+    if (tokens.length && scoreEntry(entry, tokens) <= 0) return false;
+  }
+  return true;
+}
+
+function revealEntry(entry) {
+  if (viewWouldShow(entry)) return;
+  state.view.nodeId = entry.locationId ? 'all' : 'unplaced';
+  state.view.status = 'all';
+  state.view.q = '';
+  const q = $('#searchInput');
+  if (q) q.value = '';
+  if (state.view.type !== 'all' && state.view.type !== entry.type) state.view.type = entry.type;
+}
+
 function renderAll(options = {}) {
   renderTree();
   renderExtra();
@@ -2733,6 +2755,7 @@ async function saveEditor() {
     }
 
     const now = Date.now();
+    let savedEntry = null;
     if (isEdit) {
       const entry = entryById(draft.id);
       if (entry) {
@@ -2747,9 +2770,10 @@ async function saveEditor() {
         });
         if (entry.checked && !wasChecked) entry.checkedAt = now;
         if (!entry.checked) entry.checkedAt = null;
+        savedEntry = entry;
       }
     } else {
-      state.data.entries.push({
+      const entry = {
         id: 'e-' + uid(),
         type: draft.type,
         title,
@@ -2759,10 +2783,13 @@ async function saveEditor() {
         fields,
         createdAt: now,
         updatedAt: now,
-      });
+      };
+      state.data.entries.push(entry);
+      savedEntry = entry;
     }
 
     save();
+    if (savedEntry) revealEntry(savedEntry);
     renderAll();
     closeEditor();
     toast(isEdit ? '已保存修改' : '已收入收藏');
