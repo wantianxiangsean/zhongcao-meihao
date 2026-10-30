@@ -171,7 +171,7 @@ const TYPES = {
       { key: 'kind', label: '类型', ph: '手动填写，如：小说、非虚构、散文…' },
       { key: 'why', label: '种草来源', type: 'textarea', ph: '从哪里知道这本书…', span: true },
       { key: 'insights', label: '核心观点 · 我的理解', type: 'pairs' },
-      { key: 'quote', label: '摘抄 / 印象', type: 'textarea', ph: '想记住的句子、读完的感受…', span: true },
+      { key: 'quote', label: '摘抄 / 印象', type: 'list', ph: '想记住的句子、读完的感受…' },
       { key: 'notes', label: '备注', type: 'textarea', ph: '想推荐给谁、版本提醒…', span: true },
       { key: 'summary', label: '一句话总结', ph: '用一句话总结这本书…', common: true },
     ],
@@ -1956,6 +1956,10 @@ function buildEditorBody() {
 
   for (const def of type.fields) {
     if (def.common) continue;
+    if (def.type === 'list') {
+      grid.appendChild(buildListField(def));
+      continue;
+    }
     if (def.type === 'pairs') {
       grid.appendChild(buildPairsField(def));
       continue;
@@ -2044,6 +2048,49 @@ function fieldEl({ label, required, span }, input) {
   const labelEl = el('span', { class: 'label', html: label + (required ? '<span class="req">*</span>' : '') });
   if (!input.getAttribute('aria-label')) input.setAttribute('aria-label', label);
   field.append(labelEl, input);
+  return field;
+}
+
+function buildListField(def) {
+  const field = el('div', { class: 'field span-2' });
+  const head = el('div', { class: 'list-head' });
+  head.appendChild(el('span', { class: 'label', text: def.label }));
+  const addBtn = el('button', { type: 'button', class: 'btn tiny ghost list-add' });
+  addBtn.innerHTML = icon('plus') + '<span>新增</span>';
+  head.appendChild(addBtn);
+  field.appendChild(head);
+
+  const list = el('div', { class: 'list-field' });
+  list.dataset.list = def.key;
+
+  const addRow = (value = '', focus = false) => {
+    const row = el('div', { class: 'list-row' });
+    const textarea = el('textarea', { rows: '2', 'aria-label': def.label });
+    textarea.value = value;
+    textarea.placeholder = def.ph || '';
+    const remove = el('button', {
+      type: 'button',
+      class: 'icon-btn list-remove',
+      'aria-label': '删除这一条',
+      title: '删除',
+    });
+    remove.innerHTML = icon('trash');
+    remove.addEventListener('click', () => {
+      row.remove();
+      if (!list.querySelector('.list-row')) addRow('', false);
+    });
+    row.append(textarea, remove);
+    list.appendChild(row);
+    if (focus) textarea.focus();
+  };
+
+  const raw = draft.values[def.key];
+  const initial = Array.isArray(raw) ? raw : raw ? [String(raw)] : [];
+  if (initial.length) initial.forEach((value) => addRow(String(value)));
+  else addRow('');
+
+  addBtn.addEventListener('click', () => addRow('', true));
+  field.appendChild(list);
   return field;
 }
 
@@ -2253,6 +2300,11 @@ function readDraftFromForm() {
   const checked = body.querySelector('[name="checked"]');
   if (checked) draft.checked = checked.checked;
   for (const def of TYPES[draft.type].fields) {
+    if (def.type === 'list') {
+      const rows = body.querySelectorAll(`[data-list="${def.key}"] textarea`);
+      draft.values[def.key] = [...rows].map((row) => row.value);
+      continue;
+    }
     if (def.type === 'pairs') {
       const rows = body.querySelectorAll(`[data-pairs="${def.key}"] .pair-row`);
       draft.values[def.key] = [...rows].map((row) => ({
@@ -2329,6 +2381,13 @@ async function saveEditor() {
     };
     for (const def of TYPES[draft.type].fields) {
       const raw = draft.values[def.key];
+      if (def.type === 'list') {
+        const values = (Array.isArray(raw) ? raw : raw ? [raw] : [])
+          .map((value) => String(value).trim())
+          .filter(Boolean);
+        if (values.length) fields[def.key] = values;
+        continue;
+      }
       if (def.type === 'pairs') {
         const pairs = (Array.isArray(raw) ? raw : [])
           .map((pair) => ({
