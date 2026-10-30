@@ -1214,6 +1214,29 @@ body.resizing * {
   .form-hint { width: 100%; }
 }
 
+.image-hint {
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  color: var(--ink-3);
+}
+.image-field { display: flex; gap: 12px; align-items: flex-start; }
+.image-preview {
+  width: 232px;
+  aspect-ratio: 16 / 9;
+  flex: none;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+}
+.image-preview.is-empty { border-style: dashed; }
+.image-preview .ic { width: 26px; height: 26px; }
+.image-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.image-actions { display: flex; flex-direction: column; gap: 8px; }
+
 /* ---------- 补充 ---------- */
 .cards.no-anim .card { animation: none; }
 
