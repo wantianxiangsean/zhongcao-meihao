@@ -1,5 +1,5 @@
 /* =========================================================
-   种草美好 · 美食与远方
+   种草美好 · 好吃与好玩
    纯前端 + 本地 Node 存储（data/data.json、data/images）
    ========================================================= */
 
@@ -62,7 +62,7 @@ function icon(name) {
 /* ---------- 类型定义 ---------- */
 const TYPES = {
   food: {
-    label: '美食',
+    label: '好吃',
     icon: 'bowl',
     place: true,
     titleLabel: '名称',
@@ -81,10 +81,10 @@ const TYPES = {
     cardFields: ['restaurant', 'price'],
   },
   spot: {
-    label: '美景',
+    label: '好玩',
     icon: 'mountain',
     place: true,
-    titleLabel: '美景名称',
+    titleLabel: '名称',
     titlePlaceholder: '地方、景区或路线名',
     checkLabel: '打卡',
     checkDone: '已打卡',
@@ -222,8 +222,8 @@ const TYPES = {
 const TYPE_ORDER = ['food', 'spot', 'media', 'book', 'goods', 'people', 'topic'];
 const TYPE_FILTERS = [
   { value: 'all', label: '全部' },
-  { value: 'food', label: '美食' },
-  { value: 'spot', label: '美景' },
+  { value: 'food', label: '好吃' },
+  { value: 'spot', label: '好玩' },
   { value: 'media', label: '好剧' },
   { value: 'book', label: '好书' },
   { value: 'goods', label: '好物' },
