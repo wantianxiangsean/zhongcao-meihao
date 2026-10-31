@@ -2669,13 +2669,13 @@ function buildChipsField(def) {
   list.dataset.chips = def.key;
   const parts = def.parts || [];
 
+  let dragRow = null;
+
   const startDrag = (row, e) => {
+    if (dragRow) return;
     if (e.button != null && e.button !== 0) return;
     e.preventDefault();
-    const handle = e.currentTarget;
-    try {
-      handle.setPointerCapture(e.pointerId);
-    } catch {}
+    dragRow = row;
     row.classList.add('dragging');
     row.style.pointerEvents = 'none';
     document.body.classList.add('chip-dragging');
@@ -2689,19 +2689,21 @@ function buildChipsField(def) {
       list.insertBefore(row, before ? target : target.nextSibling);
     };
     const finish = () => {
+      if (!dragRow) return;
+      dragRow = null;
       row.classList.remove('dragging');
       row.style.pointerEvents = '';
       document.body.classList.remove('chip-dragging');
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', finish);
-      handle.removeEventListener('pointercancel', finish);
-      try {
-        handle.releasePointerCapture(e.pointerId);
-      } catch {}
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', finish);
+      document.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
     };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', finish);
-    handle.addEventListener('pointercancel', finish);
+
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', finish);
+    document.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
   };
 
   const addRow = (point = {}, focus = false) => {
