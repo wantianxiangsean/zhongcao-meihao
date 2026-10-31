@@ -140,9 +140,35 @@ const server = http.createServer(async (req, res) => {
       const match = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=\s]+)$/.exec(payload.dataUrl || '');
       if (!match) return sendJson(res, 400, { error: '只支持 PNG / JPG / WebP / GIF 图片' });
       const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-      const name = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
-      fs.writeFileSync(path.join(IMAGE_DIR, name), Buffer.from(match[2], 'base64'));
+      const wanted = String(payload.name || '');
+      const name = /^[a-z0-9]{8,40}$/.test(wanted)
+        ? `${wanted}.${ext}`
+        : `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+      const filePath = path.join(IMAGE_DIR, name);
+      if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, Buffer.from(match[2], 'base64'));
+      }
       return sendJson(res, 200, { url: '/images/' + name });
+    }
+
+    if (pathname === '/api/images' && req.method === 'GET') {
+      const list = fs
+        .readdirSync(IMAGE_DIR)
+        .filter((name) => !name.startsWith('.'))
+        .map((name) => {
+          const stat = fs.statSync(path.join(IMAGE_DIR, name));
+          return { name, size: stat.size };
+        });
+      return sendJson(res, 200, list);
+    }
+
+    if (pathname.startsWith('/api/images/') && req.method === 'DELETE') {
+      const name = path.basename(pathname);
+      if (!name || name.startsWith('.')) return sendJson(res, 400, { error: '图片名不正确' });
+      const filePath = path.join(IMAGE_DIR, name);
+      if (!fs.existsSync(filePath)) return sendJson(res, 200, { ok: true });
+      fs.unlinkSync(filePath);
+      return sendJson(res, 200, { ok: true });
     }
 
     if (pathname.startsWith('/images/') && req.method === 'GET') {

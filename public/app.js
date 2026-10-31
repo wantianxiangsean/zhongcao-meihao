@@ -474,6 +474,17 @@ function applyImage(img, src, onError) {
 /* ---------- 图片：裁成 360p 再上传 ---------- */
 const IMAGE_WIDTH = 640;
 const IMAGE_HEIGHT = 360;
+const IMAGE_MAX_CHARS = 82000; // 约 60KB 的 base64
+
+async function imageHash(dataUrl) {
+  const base64 = dataUrl.split(',')[1] || '';
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)]
+    .slice(0, 8)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 function compressImage(file) {
   return new Promise((resolve, reject) => {
@@ -500,10 +511,10 @@ function compressImage(file) {
         ctx.fillRect(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
 
-        let quality = 0.8;
+        let quality = 0.75;
         let result = canvas.toDataURL('image/jpeg', quality);
-        while (result.length > 130000 && quality > 0.45) {
-          quality -= 0.08;
+        while (result.length > IMAGE_MAX_CHARS && quality > 0.45) {
+          quality -= 0.07;
           result = canvas.toDataURL('image/jpeg', quality);
         }
         resolve(result);
@@ -523,30 +534,170 @@ function compressImage(file) {
 
 async function ghUploadImage(file) {
   const dataUrl = await compressImage(file);
-  const path = `images/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.jpg`;
-  await ghRequest(ghContentsUrl(path), {
-    method: 'PUT',
-    headers: ghHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
-      message: '添加图片',
-      content: dataUrl.split(',')[1],
-      branch: GH.config.branch,
-    }),
-  });
+  const hash = await imageHash(dataUrl);
+  const path = `images/${hash}.jpg`;
+  const url = ghContentsUrl(path);
+  const meta = await ghRequest(
+    url + `?ref=${encodeURIComponent(GH.config.branch)}&t=${Date.now()}`,
+    { headers: ghHeaders() }
+  );
+  if (meta.status !== 200) {
+    await ghRequest(url, {
+      method: 'PUT',
+      headers: ghHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        message: '添加图片',
+        content: dataUrl.split(',')[1],
+        branch: GH.config.branch,
+      }),
+    });
+  }
   return GH_IMAGE_PREFIX + path;
 }
 
 async function uploadImage(file) {
   if (isGithubMode()) return ghUploadImage(file);
   const dataUrl = await compressImage(file);
+  const hash = await imageHash(dataUrl);
   const res = await fetch('/api/images', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataUrl }),
+    body: JSON.stringify({ dataUrl, name: hash }),
   });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(payload.error || '图片上传失败');
   return payload.url;
+}
+
+function imageReferenced(path) {
+  const full = GH_IMAGE_PREFIX + path;
+  const local = '/images/' + path.split('/').pop();
+  return state.data.entries.some((entry) => {
+    const img = entry.fields && entry.fields.image;
+    return img === full || img === local;
+  });
+}
+
+async function deleteCloudImage(path, sha) {
+  if (imageReferenced(path)) return false;
+  let digest = sha;
+  if (!digest) {
+    const meta = await ghRequest(
+      ghContentsUrl(path) + `?ref=${encodeURIComponent(GH.config.branch)}&t=${Date.now()}`,
+      { headers: ghHeaders() }
+    );
+    if (meta.status !== 200) return false;
+    digest = (await meta.json()).sha;
+  }
+  await ghRequest(ghContentsUrl(path), {
+    method: 'DELETE',
+    headers: ghHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      message: '删除未使用的图片',
+      sha: digest,
+      branch: GH.config.branch,
+    }),
+  });
+  return true;
+}
+
+async function deleteImage(src) {
+  if (!src) return;
+  try {
+    if (isGhImage(src)) {
+      await deleteCloudImage(src.slice(GH_IMAGE_PREFIX.length));
+    } else if (src.startsWith('/images/')) {
+      const name = src.slice('/images/'.length);
+      if (imageReferenced('images/' + name)) return;
+      await fetch('/api/images/' + encodeURIComponent(name), { method: 'DELETE' });
+    }
+  } catch {}
+}
+
+async function listCloudImages() {
+  const res = await ghRequest(
+    ghContentsUrl('images') + `?ref=${encodeURIComponent(GH.config.branch)}&t=${Date.now()}`,
+    { headers: ghHeaders() }
+  );
+  if (res.status === 404) return [];
+  const list = await res.json();
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((item) => item.type === 'file')
+    .map((item) => ({ path: item.path, sha: item.sha, size: item.size || 0 }));
+}
+
+async function imageStorageInfo() {
+  if (!isGithubMode()) {
+    const res = await fetch('/api/images');
+    if (!res.ok) return { count: 0, size: 0 };
+    const list = await res.json().catch(() => []);
+    return {
+      count: list.length,
+      size: list.reduce((sum, item) => sum + (item.size || 0), 0),
+    };
+  }
+  const list = await listCloudImages();
+  return { count: list.length, size: list.reduce((sum, item) => sum + (item.size || 0), 0) };
+}
+
+async function cleanupImages() {
+  if (!window.confirm('清理没有被任何收藏引用的图片？')) return;
+  const btn = $('#imageCleanup');
+  if (btn) btn.disabled = true;
+  let removed = 0;
+  let freed = 0;
+  try {
+    if (isGithubMode()) {
+      const list = await listCloudImages();
+      for (const item of list) {
+        if (imageReferenced(item.path)) continue;
+        if (await deleteCloudImage(item.path, item.sha)) {
+          removed += 1;
+          freed += item.size;
+        }
+      }
+    } else {
+      const res = await fetch('/api/images');
+      const list = res.ok ? await res.json().catch(() => []) : [];
+      for (const item of list) {
+        if (imageReferenced('images/' + item.name)) continue;
+        const del = await fetch('/api/images/' + encodeURIComponent(item.name), { method: 'DELETE' });
+        if (del.ok) {
+          removed += 1;
+          freed += item.size || 0;
+        }
+      }
+    }
+    toast(
+      removed
+        ? `已清理 ${removed} 张图片，释放 ${formatBytes(freed)}`
+        : '没有需要清理的图片'
+    );
+    refreshImageStorage();
+  } catch (err) {
+    toast('清理失败：' + (err.message || '未知错误'), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 KB';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+async function refreshImageStorage() {
+  const info = $('#imageStoreInfo');
+  if (!info) return;
+  info.textContent = '图片：统计中…';
+  try {
+    const { count, size } = await imageStorageInfo();
+    info.textContent = `图片：${count} 张 · ${formatBytes(size)}`;
+  } catch {
+    info.textContent = '图片：统计失败';
+  }
 }
 
 let treeEdit = null; // { mode:'add', parentId } | { mode:'rename', id }
@@ -1277,6 +1428,7 @@ function openSettings() {
   $('#ghRestore').hidden = !connected;
   renderCloudStatus();
   $('#settingsBackdrop').hidden = false;
+  refreshImageStorage();
   sessionStorage.setItem('interests.settingsSeen', '1');
   setTimeout(() => {
     const target = $('#setOwner').value && $('#setRepo').value ? $('#setToken') : $('#setOwner');
@@ -1627,13 +1779,13 @@ function renderSegs() {
 }
 
 const TYPE_GRADIENTS = {
-  food: 'linear-gradient(135deg,#c46a4a,#8e3b28)',
-  spot: 'linear-gradient(135deg,#7d8a5c,#4c5a3c)',
-  media: 'linear-gradient(135deg,#c39a4e,#8a6526)',
-  book: 'linear-gradient(135deg,#b07b4f,#77482a)',
-  goods: 'linear-gradient(135deg,#b5726a,#7d3f46)',
-  people: 'linear-gradient(135deg,#6f8b96,#3f5b66)',
-  topic: 'linear-gradient(135deg,#8c7ba8,#5b4c78)',
+  food: 'linear-gradient(135deg,#74b3a1,#3e7d6f)',
+  spot: 'linear-gradient(135deg,#86b4d1,#4a7fa3)',
+  media: 'linear-gradient(135deg,#96a6d8,#5d6cb0)',
+  book: 'linear-gradient(135deg,#b0a8d4,#726aa8)',
+  goods: 'linear-gradient(135deg,#7cc0c4,#468f97)',
+  people: 'linear-gradient(135deg,#7893b3,#4a6580)',
+  topic: 'linear-gradient(135deg,#93c0d2,#4f849e)',
 };
 
 function gradientFor(entry) {
@@ -2101,6 +2253,7 @@ function deleteEntry(id) {
   save();
   closeDrawer();
   renderAll();
+  deleteImage(entry.fields && entry.fields.image);
   toast('已删除');
 }
 
@@ -2814,6 +2967,9 @@ async function saveEditor() {
   const originalText = saveBtn.textContent;
 
   try {
+    const previousImage = isEdit
+      ? ((entryById(draft.id) || {}).fields || {}).image || ''
+      : '';
     let image = draft.image || '';
     if (draft.file) {
       saveBtn.textContent = '上传图片中…';
@@ -2908,6 +3064,7 @@ async function saveEditor() {
     save();
     if (savedEntry) revealEntry(savedEntry);
     renderAll();
+    if (previousImage && previousImage !== image) deleteImage(previousImage);
     closeEditor();
     toast(isEdit ? '已保存修改' : '已收入收藏');
   } catch (err) {
@@ -3125,6 +3282,7 @@ function bindEvents() {
   $('#ghDisconnect').addEventListener('click', disconnectGithub);
   $('#ghBackup').addEventListener('click', runManualCloudBackup);
   $('#ghRestore').addEventListener('click', restoreFromCloud);
+  $('#imageCleanup').addEventListener('click', cleanupImages);
 
   $('#editorClose').addEventListener('click', closeEditor);
   $('#editorCancel').addEventListener('click', closeEditor);
