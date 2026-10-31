@@ -544,10 +544,9 @@ body.resizing * {
 
 .cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 210px));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 18px;
   align-items: start;
-  justify-content: start;
 }
 
 .letter-head {
@@ -607,7 +606,7 @@ body.resizing * {
 
 .card-media {
   position: relative;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 4 / 3;
   overflow: hidden;
   background: var(--paper-deep);
 }
@@ -1065,7 +1064,7 @@ body.resizing * {
 .drawer-scroll { flex: 1; overflow-y: auto; }
 .drawer-media {
   position: relative;
-  height: clamp(200px, 30vh, 320px);
+  height: clamp(140px, 18vh, 190px);
   background: var(--paper-deep);
   overflow: hidden;
 }
