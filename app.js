@@ -2746,6 +2746,10 @@ function buildChipsField(def) {
       if (input.value.trim()) addRow({}, true);
     });
     cardHead.append(drag, input, remove);
+    row.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('input, textarea, select, button, label')) return;
+      startDrag(row, e);
+    });
     row.appendChild(cardHead);
 
     parts.forEach((part) => {
