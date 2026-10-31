@@ -1374,6 +1374,8 @@ body.resizing * {
 }
 .chip-drag .ic { width: 14px; height: 14px; }
 .chip-drag:active { cursor: grabbing; }
+.chip-card { cursor: grab; }
+.chip-card input { cursor: text; }
 .chip-card.dragging {
   opacity: .9;
   border-style: dashed;
