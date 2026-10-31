@@ -1370,10 +1370,17 @@ body.resizing * {
   flex: none;
   color: var(--ink-3);
   cursor: grab;
+  touch-action: none;
 }
 .chip-drag .ic { width: 14px; height: 14px; }
 .chip-drag:active { cursor: grabbing; }
-.chip-card.dragging { opacity: .45; border-style: dashed; }
+.chip-card.dragging {
+  opacity: .9;
+  border-style: dashed;
+  border-color: var(--accent);
+  box-shadow: 0 10px 24px rgba(22, 58, 74, .14);
+}
+body.chip-dragging { user-select: none; cursor: grabbing; }
 .chip-card-head > input {
   flex: 1;
   min-width: 0;

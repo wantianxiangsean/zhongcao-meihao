@@ -2668,20 +2668,41 @@ function buildChipsField(def) {
   const list = el('div', { class: 'chip-field' });
   list.dataset.chips = def.key;
   const parts = def.parts || [];
-  let dragging = null;
 
-  list.addEventListener('dragover', (e) => {
-    if (!dragging) return;
+  const startDrag = (row, e) => {
+    if (e.button != null && e.button !== 0) return;
     e.preventDefault();
-    const target = e.target.closest('.chip-card');
-    if (!target || target === dragging) return;
-    const rect = target.getBoundingClientRect();
-    const before = e.clientY < rect.top + rect.height / 2;
-    list.insertBefore(dragging, before ? target : target.nextSibling);
-  });
-  list.addEventListener('drop', (e) => {
-    if (dragging) e.preventDefault();
-  });
+    const handle = e.currentTarget;
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {}
+    row.classList.add('dragging');
+    row.style.pointerEvents = 'none';
+    document.body.classList.add('chip-dragging');
+
+    const move = (ev) => {
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      const target = under && under.closest ? under.closest('.chip-card') : null;
+      if (!target || target === row) return;
+      const rect = target.getBoundingClientRect();
+      const before = ev.clientY < rect.top + rect.height / 2;
+      list.insertBefore(row, before ? target : target.nextSibling);
+    };
+    const finish = () => {
+      row.classList.remove('dragging');
+      row.style.pointerEvents = '';
+      document.body.classList.remove('chip-dragging');
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', finish);
+      handle.removeEventListener('pointercancel', finish);
+      try {
+        handle.releasePointerCapture(e.pointerId);
+      } catch {}
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
+  };
 
   const addRow = (point = {}, focus = false) => {
     const row = el('div', { class: 'chip-card' });
@@ -2694,9 +2715,7 @@ function buildChipsField(def) {
       'aria-label': '拖动排序',
     });
     drag.innerHTML = icon('grip');
-    drag.addEventListener('pointerdown', () => {
-      row.draggable = true;
-    });
+    drag.addEventListener('pointerdown', (e) => startDrag(row, e));
     drag.addEventListener('click', (e) => e.preventDefault());
     const input = el('input', {
       type: 'text',
@@ -2723,19 +2742,6 @@ function buildChipsField(def) {
       if (e.key !== 'Enter') return;
       e.preventDefault();
       if (input.value.trim()) addRow({}, true);
-    });
-    row.addEventListener('dragstart', (e) => {
-      dragging = row;
-      row.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-      try {
-        e.dataTransfer.setData('text/plain', 'chip');
-      } catch {}
-    });
-    row.addEventListener('dragend', () => {
-      dragging = null;
-      row.draggable = false;
-      row.classList.remove('dragging');
     });
     cardHead.append(drag, input, remove);
     row.appendChild(cardHead);
