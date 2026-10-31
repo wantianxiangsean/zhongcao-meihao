@@ -316,7 +316,7 @@ function ghHeaders(extra) {
 async function ghRequest(url, options = {}) {
   let res;
   try {
-    res = await fetch(url, options);
+    res = await fetch(url, { cache: 'no-store', ...options });
   } catch {
     const err = new Error('网络连接失败，请稍后重试');
     err.network = true;
@@ -402,9 +402,10 @@ function ghSave(data) {
 async function ghSaveContent(content, count, attempt) {
   const url = ghContentsUrl(GH.config.path);
   try {
-    const meta = await ghRequest(url + `?ref=${encodeURIComponent(GH.config.branch)}`, {
-      headers: ghHeaders(),
-    });
+    const meta = await ghRequest(
+      url + `?ref=${encodeURIComponent(GH.config.branch)}&t=${Date.now()}`,
+      { headers: ghHeaders() }
+    );
     let sha = null;
     if (meta.status === 200) {
       const info = await meta.json();
@@ -422,8 +423,8 @@ async function ghSaveContent(content, count, attempt) {
     });
   } catch (err) {
     const transient = err.network || err.status === 409 || (err.status && err.status >= 500);
-    if (attempt < 1 && transient) {
-      await new Promise((resolve) => setTimeout(resolve, 800));
+    if (attempt < 2 && transient) {
+      await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
       return ghSaveContent(content, count, attempt + 1);
     }
     throw err;
@@ -720,12 +721,20 @@ let saveTimer = null;
 let dirty = false;
 let saving = false;
 let syncState = 'idle';
+const CLOUD_SAVE_DELAY = 2 * 60 * 1000;
+const PENDING_CLOUD_KEY = 'interests.pendingCloud';
 
 function save() {
   dirty = true;
-  if (isGithubMode()) writeLocalCache();
+  if (isGithubMode()) {
+    writeLocalCache();
+    try {
+      localStorage.setItem(PENDING_CLOUD_KEY, String(Date.now()));
+    } catch {}
+  }
+  renderStorage();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(flushSave, isGithubMode() ? 900 : 200);
+  saveTimer = setTimeout(flushSave, isGithubMode() ? CLOUD_SAVE_DELAY : 200);
 }
 
 function setSyncState(next) {
@@ -770,6 +779,11 @@ async function flushSave() {
   let ok = true;
   try {
     await storeWrite(state.data);
+    if (isGithubMode()) {
+      try {
+        localStorage.removeItem(PENDING_CLOUD_KEY);
+      } catch {}
+    }
     setSyncState('saved');
     if (isGithubMode()) setTimeout(maybeCloudBackup, 800);
   } catch (err) {
@@ -784,7 +798,7 @@ async function flushSave() {
     saving = false;
     if (dirty && ok) {
       clearTimeout(saveTimer);
-      saveTimer = setTimeout(flushSave, 400);
+      saveTimer = setTimeout(flushSave, isGithubMode() ? 2000 : 400);
     }
   }
 }
@@ -890,6 +904,12 @@ async function loadData() {
         }, 500);
       }
     }
+  }
+
+  if (isGithubMode() && localStorage.getItem(PENDING_CLOUD_KEY)) {
+    dirty = true;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushSave, CLOUD_SAVE_DELAY);
   }
 
   const saved = localStorage.getItem('interests.open');
@@ -1211,12 +1231,14 @@ function renderStorage() {
         ? '保存中…'
         : syncState === 'error'
         ? '保存失败'
+        : dirty
+        ? '待同步'
         : syncState === 'saved'
         ? '已同步'
         : '已连接';
     line.textContent = `私有仓库 ${GH.config.owner}/${GH.config.repo} · ${label}`;
     line.classList.add('linked');
-    line.title = '点击管理数据仓库';
+    line.title = '点击管理数据仓库 · 改动每 2 分钟自动同步，也可点「备份」立即保存';
   } else {
     line.textContent = '本机存储 · 连接私有仓库';
     line.classList.remove('linked');
@@ -1440,6 +1462,68 @@ function setView(nodeId) {
   renderAll();
 }
 
+const PINYIN_ANCHORS = [
+  ['A', '阿'], ['B', '八'], ['C', '擦'], ['D', '搭'], ['E', '蛾'], ['F', '发'],
+  ['G', '噶'], ['H', '哈'], ['J', '击'], ['K', '喀'], ['L', '拉'], ['M', '妈'],
+  ['N', '拿'], ['O', '哦'], ['P', '趴'], ['Q', '期'], ['R', '然'], ['S', '撒'],
+  ['T', '塌'], ['W', '挖'], ['X', '昔'], ['Y', '压'], ['Z', '匝'],
+];
+let titleCollator;
+
+function getTitleCollator() {
+  if (titleCollator === undefined) {
+    try {
+      titleCollator = new Intl.Collator('zh-Hans-CN', { usage: 'sort' });
+    } catch {
+      titleCollator = null;
+    }
+  }
+  return titleCollator;
+}
+
+function pinyinInitial(ch) {
+  const col = getTitleCollator();
+  if (!col || col.compare('阿', '匝') >= 0) return '';
+  let letter = '';
+  for (const [initial, ref] of PINYIN_ANCHORS) {
+    if (col.compare(ch, ref) >= 0) letter = initial;
+    else break;
+  }
+  return letter;
+}
+
+function entryInitial(entry) {
+  const title = String(entry.title || '').trim();
+  if (!title || !/[0-9A-Za-z一-龥]/.test(title[0])) return '#';
+  const first = [...title][0];
+  if (/[A-Za-z]/.test(first)) return first.toUpperCase();
+  if (/[0-9]/.test(first)) return '#';
+  return pinyinInitial(first) || '#';
+}
+
+function groupByInitial(list) {
+  const col = getTitleCollator();
+  const groups = new Map();
+  list.forEach((entry) => {
+    const initial = entryInitial(entry);
+    if (!groups.has(initial)) groups.set(initial, []);
+    groups.get(initial).push(entry);
+  });
+  const keys = [...groups.keys()].sort((a, b) => {
+    if (a === b) return 0;
+    if (a === '#') return 1;
+    if (b === '#') return -1;
+    return a < b ? -1 : 1;
+  });
+  return keys.map((initial) => ({
+    initial,
+    items: groups.get(initial).slice().sort((a, b) => {
+      const byTitle = col ? col.compare(a.title || '', b.title || '') : 0;
+      return byTitle || (b.updatedAt || 0) - (a.updatedAt || 0);
+    }),
+  }));
+}
+
 function renderMain(animate) {
   const node = getNode(state.view.nodeId) || getNode('all');
   const all = entriesIn(state.view.nodeId);
@@ -1471,7 +1555,14 @@ function renderMain(animate) {
 
   if (list.length) {
     const frag = document.createDocumentFragment();
-    list.forEach((entry) => frag.appendChild(cardEl(entry)));
+    groupByInitial(list).forEach(({ initial, items }) => {
+      const group = el('section', { class: 'letter-group' });
+      group.appendChild(el('h4', { class: 'letter-head', text: initial }));
+      const grid = el('div', { class: 'cards-grid' });
+      items.forEach((entry) => grid.appendChild(cardEl(entry)));
+      group.appendChild(grid);
+      frag.appendChild(group);
+    });
     cards.appendChild(frag);
     $('#empty').hidden = true;
   } else {
@@ -2691,8 +2782,19 @@ async function saveEditor() {
   }
   $('#editorHint').textContent = '';
 
-  const saveBtn = $('#editorSave');
   const isEdit = !!draft.id;
+  if (!isEdit) {
+    const key = normalizeForSearch(title).replace(/\s+/g, '');
+    const dup = state.data.entries.find(
+      (e) => e.type === draft.type && normalizeForSearch(e.title).replace(/\s+/g, '') === key
+    );
+    if (dup) {
+      $('#editorHint').textContent = '重复：已有一条同名记录';
+      return;
+    }
+  }
+
+  const saveBtn = $('#editorSave');
   saveBtn.disabled = true;
   const originalText = saveBtn.textContent;
 
@@ -2854,6 +2956,10 @@ async function backupToCloudNow() {
   try {
     writeLocalCache();
     await ghSave(state.data);
+    dirty = false;
+    try {
+      localStorage.removeItem(PENDING_CLOUD_KEY);
+    } catch {}
     setSyncState('saved');
     toast('已备份到云端');
   } catch (err) {
@@ -3066,6 +3172,9 @@ async function init() {
   initSidebarResize();
   await loadData();
   renderAll();
+  setInterval(() => {
+    if (isGithubMode() && dirty && !saving) flushSave();
+  }, CLOUD_SAVE_DELAY);
 }
 
 init();
