@@ -879,6 +879,19 @@ function migratePeopleWorks(data) {
   });
 }
 
+async function reconcileCloud() {
+  try {
+    const remote = await ghLoad();
+    if (!remote) return;
+    const maxOf = (data) =>
+      (data.entries || []).reduce((m, e) => Math.max(m, e.updatedAt || 0), 0);
+    if (maxOf(state.data) > maxOf(remote)) {
+      dirty = true;
+      renderStorage();
+    }
+  } catch {}
+}
+
 async function loadData() {
   try {
     state.data = await storeRead();
@@ -910,6 +923,8 @@ async function loadData() {
     dirty = true;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(flushSave, CLOUD_SAVE_DELAY);
+  } else if (isGithubMode()) {
+    reconcileCloud();
   }
 
   const saved = localStorage.getItem('interests.open');
