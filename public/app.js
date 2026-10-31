@@ -32,6 +32,7 @@ function el(tag, attrs = {}, children) {
 const ICON_PATHS = {
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  grip: '<path d="M9 7h.01M15 7h.01M9 12h.01M15 12h.01M9 17h.01M15 17h.01"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   chevron: '<path d="M9 5.5l6.5 6.5L9 18.5"/>',
   check: '<path d="M4.5 12.5l5 5L19.5 6.5"/>',
@@ -2667,11 +2668,36 @@ function buildChipsField(def) {
   const list = el('div', { class: 'chip-field' });
   list.dataset.chips = def.key;
   const parts = def.parts || [];
+  let dragging = null;
+
+  list.addEventListener('dragover', (e) => {
+    if (!dragging) return;
+    e.preventDefault();
+    const target = e.target.closest('.chip-card');
+    if (!target || target === dragging) return;
+    const rect = target.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    list.insertBefore(dragging, before ? target : target.nextSibling);
+  });
+  list.addEventListener('drop', (e) => {
+    if (dragging) e.preventDefault();
+  });
 
   const addRow = (point = {}, focus = false) => {
     const row = el('div', { class: 'chip-card' });
 
     const cardHead = el('div', { class: 'chip-card-head' });
+    const drag = el('button', {
+      type: 'button',
+      class: 'icon-btn chip-drag',
+      title: '拖动排序',
+      'aria-label': '拖动排序',
+    });
+    drag.innerHTML = icon('grip');
+    drag.addEventListener('pointerdown', () => {
+      row.draggable = true;
+    });
+    drag.addEventListener('click', (e) => e.preventDefault());
     const input = el('input', {
       type: 'text',
       'aria-label': def.label,
@@ -2698,7 +2724,20 @@ function buildChipsField(def) {
       e.preventDefault();
       if (input.value.trim()) addRow({}, true);
     });
-    cardHead.append(input, remove);
+    row.addEventListener('dragstart', (e) => {
+      dragging = row;
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try {
+        e.dataTransfer.setData('text/plain', 'chip');
+      } catch {}
+    });
+    row.addEventListener('dragend', () => {
+      dragging = null;
+      row.draggable = false;
+      row.classList.remove('dragging');
+    });
+    cardHead.append(drag, input, remove);
     row.appendChild(cardHead);
 
     parts.forEach((part) => {

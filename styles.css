@@ -1363,7 +1363,17 @@ body.resizing * {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.chip-card-head { display: flex; align-items: center; gap: 4px; }
+.chip-card-head { display: flex; align-items: center; gap: 2px; }
+.chip-drag {
+  width: 22px;
+  height: 24px;
+  flex: none;
+  color: var(--ink-3);
+  cursor: grab;
+}
+.chip-drag .ic { width: 14px; height: 14px; }
+.chip-drag:active { cursor: grabbing; }
+.chip-card.dragging { opacity: .45; border-style: dashed; }
 .chip-card-head > input {
   flex: 1;
   min-width: 0;
@@ -1402,7 +1412,11 @@ body.resizing * {
   outline: none;
   border-color: var(--accent);
 }
-.point-list { display: flex; flex-direction: column; gap: 8px; }
+.point-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
 .point-card {
   padding: 8px 11px;
   background: var(--paper);
