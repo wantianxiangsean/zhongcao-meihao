@@ -431,6 +431,13 @@ async function ghSaveContent(content, count, attempt) {
   }
 }
 
+function entryImages(entry) {
+  const fields = entry && entry.fields;
+  if (!fields) return [];
+  if (Array.isArray(fields.images)) return fields.images.filter(Boolean);
+  return fields.image ? [fields.image] : [];
+}
+
 function isGhImage(src) {
   return typeof src === 'string' && src.startsWith(GH_IMAGE_PREFIX);
 }
@@ -572,10 +579,9 @@ async function uploadImage(file) {
 function imageReferenced(path) {
   const full = GH_IMAGE_PREFIX + path;
   const local = '/images/' + path.split('/').pop();
-  return state.data.entries.some((entry) => {
-    const img = entry.fields && entry.fields.image;
-    return img === full || img === local;
-  });
+  return state.data.entries.some((entry) =>
+    entryImages(entry).some((img) => img === full || img === local)
+  );
 }
 
 async function deleteCloudImage(path, sha) {
@@ -998,6 +1004,21 @@ function migrateSpotPoints(data) {
   });
 }
 
+function migrateImages(data) {
+  if (!data || !Array.isArray(data.entries)) return;
+  data.entries.forEach((entry) => {
+    if (!entry || !entry.fields) return;
+    const fields = entry.fields;
+    if (Array.isArray(fields.images)) {
+      fields.images = fields.images.filter(Boolean);
+      if (!fields.images.length) delete fields.images;
+    } else if (typeof fields.image === 'string' && fields.image) {
+      fields.images = [fields.image];
+    }
+    delete fields.image;
+  });
+}
+
 function migratePeopleWorks(data) {
   if (!data || !Array.isArray(data.entries)) return;
   data.entries.forEach((entry) => {
@@ -1048,6 +1069,7 @@ async function loadData() {
     state.data = await storeRead();
     migrateSpotPoints(state.data);
     migratePeopleWorks(state.data);
+    migrateImages(state.data);
     if (isGithubMode()) writeLocalCache();
   } catch (err) {
     const cached = isGithubMode() ? readLocalCache() : null;
@@ -1055,6 +1077,7 @@ async function loadData() {
       state.data = cached;
       migrateSpotPoints(state.data);
     migratePeopleWorks(state.data);
+    migrateImages(state.data);
       toast('云端暂时读取失败，已载入本机缓存', 'error');
     } else {
       state.data = { version: 1, entries: [], locations: [] };
@@ -1490,7 +1513,7 @@ async function connectGithub() {
       const localCount = previous ? 0 : state.data.entries.length;
       let uploadLocal = false;
       if (localCount > 0) {
-        const hasImage = state.data.entries.some((e) => e.fields && e.fields.image);
+        const hasImage = state.data.entries.some((e) => entryImages(e).length);
         uploadLocal = window.confirm(
           `私有仓库还没有数据。要把本机现有的 ${localCount} 条收藏上传上去吗？${
             hasImage ? '\n注意：本机已有图片不会自动上传。' : ''
@@ -1576,6 +1599,7 @@ async function restoreFromCloud() {
     if (!data) throw new Error('云端还没有数据文件');
     migrateSpotPoints(data);
     migratePeopleWorks(data);
+    migrateImages(data);
     state.data = data;
     writeLocalCache();
     state.view = { nodeId: 'all', type: 'all', status: 'all', q: '' };
@@ -1830,14 +1854,15 @@ function cardEl(entry) {
   });
 
   const media = el('div', { class: 'card-media' });
-  if (entry.fields && entry.fields.image) {
+  const cover = entryImages(entry)[0];
+  if (cover) {
     media.style.background = gradientFor(entry);
     const fallback = el('div', { class: 'media-fallback', html: icon(type.icon) });
     media.appendChild(fallback);
     const img = el('img', { alt: entry.title, loading: 'lazy' });
     img.addEventListener('load', () => fallback.remove(), { once: true });
     img.addEventListener('error', () => img.remove(), { once: true });
-    applyImage(img, entry.fields.image);
+    applyImage(img, cover);
     media.appendChild(img);
   } else {
     media.style.background = gradientFor(entry);
@@ -2093,34 +2118,22 @@ function openDrawer(id) {
   drawer.innerHTML = '';
 
   const scroll = el('div', { class: 'drawer-scroll' });
-  const media = el('div', { class: 'drawer-media' });
-  if (entry.fields && entry.fields.image) {
-    media.style.background = gradientFor(entry);
-    const fallback = el('div', { class: 'media-fallback', html: icon(type.icon) });
-    media.appendChild(fallback);
-    const img = el('img', { alt: entry.title });
-    img.addEventListener('load', () => fallback.remove(), { once: true });
-    img.addEventListener('error', () => img.remove(), { once: true });
-    applyImage(img, entry.fields.image);
-    media.appendChild(img);
-  } else {
-    media.style.background = gradientFor(entry);
-    media.appendChild(el('div', { class: 'media-fallback', html: icon(type.icon) }));
-  }
+  const body = el('div', { class: 'drawer-body' });
 
   const closeBtn = el('button', { class: 'icon-btn drawer-close', type: 'button', 'aria-label': '关闭' });
   closeBtn.innerHTML = icon('close');
   closeBtn.addEventListener('click', closeDrawer);
-  media.appendChild(closeBtn);
-  scroll.appendChild(media);
+  drawer.appendChild(closeBtn);
 
-  const body = el('div', { class: 'drawer-body' });
+  const head = el('div', { class: 'drawer-head' });
+  const headMain = el('div', { class: 'drawer-head-main' });
+
   const top = el('div', { class: 'drawer-top' });
   top.appendChild(el('span', { class: 'pill ' + entry.type, text: type.label }));
   if (entry.checked) top.appendChild(el('span', { class: 'pill checked', text: type.checkDone }));
-  body.appendChild(top);
+  headMain.appendChild(top);
 
-  body.appendChild(el('h2', { class: 'drawer-title', text: entry.title }));
+  headMain.appendChild(el('h2', { class: 'drawer-title', text: entry.title }));
 
   const crumb = el('div', { class: 'drawer-crumb' });
   if (entry.locationId) {
@@ -2130,7 +2143,24 @@ function openDrawer(id) {
     crumb.innerHTML = icon('tag');
     crumb.appendChild(el('b', { text: '无地点 · ' + type.label }));
   }
-  body.appendChild(crumb);
+  headMain.appendChild(crumb);
+  head.appendChild(headMain);
+
+  const images = entryImages(entry);
+  if (images.length) {
+    const thumbs = el('div', { class: 'drawer-thumbs' });
+    images.forEach((src) => {
+      const box = el('div', { class: 'drawer-thumb' });
+      const img = el('img', { alt: entry.title });
+      img.addEventListener('error', () => box.remove(), { once: true });
+      applyImage(img, src);
+      box.appendChild(img);
+      thumbs.appendChild(box);
+    });
+    head.appendChild(thumbs);
+  }
+
+  body.appendChild(head);
 
   if (entry.fields && entry.fields.rating) {
     const r = el('div', { class: 'drawer-rating' });
@@ -2253,7 +2283,7 @@ function deleteEntry(id) {
   save();
   closeDrawer();
   renderAll();
-  deleteImage(entry.fields && entry.fields.image);
+  entryImages(entry).forEach((src) => deleteImage(src));
   toast('已删除');
 }
 
@@ -2290,9 +2320,8 @@ function openEditor(options = {}) {
     rating: (entry && entry.fields && entry.fields.rating) || 0,
     tags: entry && entry.fields && Array.isArray(entry.fields.tags) ? entry.fields.tags.slice() : [],
     date: entry ? (entry.fields && entry.fields.date) || '' : todayInput(),
-    image: (entry && entry.fields && entry.fields.image) || '',
-    file: null,
-    previewUrl: (entry && entry.fields && entry.fields.image) || '',
+    imageItems: entryImages(entry).map((src) => ({ src })),
+    originalImages: entryImages(entry),
     values: {},
     locRegion: loc.region,
     locMid: loc.mid,
@@ -2463,74 +2492,60 @@ function buildImageField() {
   const wrap = el('div', { class: 'field span-2' });
   const head = el('div', { class: 'list-head' });
   head.appendChild(el('span', { class: 'label', text: '图片' }));
-  head.appendChild(el('span', { class: 'image-hint', text: '自动裁成 16:9 · 640×360' }));
+  head.appendChild(el('span', { class: 'image-hint', text: '自动裁成 16:9 · 640×360，可多张' }));
   wrap.appendChild(head);
 
   const inner = el('div', { class: 'image-field' });
-  const preview = el('div', { class: 'image-preview' });
-
-  const renderPreview = () => {
-    preview.innerHTML = '';
-    if (!draft.previewUrl) {
-      preview.classList.add('is-empty');
-      preview.innerHTML = icon('image');
-      return;
-    }
-    preview.classList.remove('is-empty');
-    const img = el('img', { alt: '图片预览' });
-    img.addEventListener(
-      'error',
-      () => {
-        preview.classList.add('is-empty');
-        preview.innerHTML = icon('image');
-      },
-      { once: true }
-    );
-    applyImage(img, draft.previewUrl);
-    preview.appendChild(img);
-  };
-  renderPreview();
-
+  const grid = el('div', { class: 'image-grid' });
   const actions = el('div', { class: 'image-actions' });
-  const fileInput = el('input', { type: 'file', accept: 'image/*', hidden: true });
+  const fileInput = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+
   const pick = el('button', { type: 'button', class: 'btn tiny ghost' });
   pick.innerHTML = icon('upload') + '<span>选择图片</span>';
   pick.addEventListener('click', () => fileInput.click());
+  actions.append(pick);
 
-  const remove = el('button', { type: 'button', class: 'btn tiny ghost' });
-  remove.innerHTML = icon('trash') + '<span>移除图片</span>';
-  remove.hidden = !draft.previewUrl;
-
-  const revoke = () => {
-    if (draft.previewUrl && draft.previewUrl.startsWith('blob:')) URL.revokeObjectURL(draft.previewUrl);
-  };
-
-  remove.addEventListener('click', () => {
-    revoke();
-    draft.file = null;
-    draft.image = '';
-    draft.previewUrl = '';
-    fileInput.value = '';
-    remove.hidden = true;
-    renderPreview();
-  });
-
-  fileInput.addEventListener('change', () => {
-    const file = fileInput.files && fileInput.files[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast('请选择图片文件', 'error');
+  const render = () => {
+    grid.innerHTML = '';
+    if (!draft.imageItems.length) {
+      grid.appendChild(el('div', { class: 'image-empty', text: '还没有图片' }));
       return;
     }
-    revoke();
-    draft.file = file;
-    draft.previewUrl = URL.createObjectURL(file);
-    remove.hidden = false;
-    renderPreview();
+    draft.imageItems.forEach((item, index) => {
+      const box = el('div', { class: 'image-thumb' });
+      const img = el('img', { alt: '图片预览' });
+      img.addEventListener('error', () => img.remove(), { once: true });
+      applyImage(img, item.src);
+      const remove = el('button', {
+        type: 'button',
+        class: 'icon-btn image-remove',
+        'aria-label': '移除这张图片',
+        title: '移除',
+      });
+      remove.innerHTML = icon('close');
+      remove.addEventListener('click', () => {
+        if (item.file && item.src.startsWith('blob:')) URL.revokeObjectURL(item.src);
+        draft.imageItems.splice(index, 1);
+        render();
+      });
+      box.append(img, remove);
+      grid.appendChild(box);
+    });
+  };
+  render();
+
+  fileInput.addEventListener('change', () => {
+    const files = [...(fileInput.files || [])].filter((file) => file.type.startsWith('image/'));
+    if (!files.length) {
+      fileInput.value = '';
+      return;
+    }
+    files.forEach((file) => draft.imageItems.push({ file, src: URL.createObjectURL(file) }));
+    fileInput.value = '';
+    render();
   });
 
-  actions.append(pick, remove);
-  inner.append(preview, actions);
+  inner.append(grid, actions);
   wrap.append(inner, fileInput);
   return wrap;
 }
@@ -2911,19 +2926,19 @@ function switchType(next) {
     rating: draft.rating,
     tags: draft.tags,
     date: draft.date,
-    image: draft.image,
-    file: draft.file,
-    previewUrl: draft.previewUrl,
+    imageItems: draft.imageItems.slice(),
+    originalImages: draft.originalImages.slice(),
     locRegion: draft.locRegion,
     locMid: draft.locMid,
     locCity: draft.locCity,
   };
   draft = { ...keep, type: next, values: {} };
   if (!TYPES[next].image) {
-    if (draft.previewUrl && draft.previewUrl.startsWith('blob:')) URL.revokeObjectURL(draft.previewUrl);
-    draft.image = '';
-    draft.file = null;
-    draft.previewUrl = '';
+    draft.imageItems.forEach((item) => {
+      if (item.file && item.src.startsWith('blob:')) URL.revokeObjectURL(item.src);
+    });
+    draft.imageItems = [];
+    draft.originalImages = [];
   }
   buildEditorBody();
   $('#editorHint').textContent = '';
@@ -2967,22 +2982,24 @@ async function saveEditor() {
   const originalText = saveBtn.textContent;
 
   try {
-    const previousImage = isEdit
-      ? ((entryById(draft.id) || {}).fields || {}).image || ''
-      : '';
-    let image = draft.image || '';
-    if (draft.file) {
-      saveBtn.textContent = '上传图片中…';
-      image = await uploadImage(draft.file);
-      draft.file = null;
-      draft.image = image;
+    const previousImages = isEdit ? entryImages(entryById(draft.id)) : [];
+    const images = [];
+    for (const item of draft.imageItems) {
+      if (item.file) {
+        saveBtn.textContent = '上传图片中…';
+        images.push(await uploadImage(item.file));
+        item.file = null;
+        item.src = images[images.length - 1];
+      } else if (item.src) {
+        images.push(item.src);
+      }
     }
 
     const fields = {
       rating: draft.rating || 0,
       tags: draft.tags.filter(Boolean),
       date: draft.date || '',
-      image,
+      images,
     };
     for (const def of TYPES[draft.type].fields) {
       const raw = draft.values[def.key];
@@ -3064,7 +3081,7 @@ async function saveEditor() {
     save();
     if (savedEntry) revealEntry(savedEntry);
     renderAll();
-    if (previousImage && previousImage !== image) deleteImage(previousImage);
+    previousImages.filter((src) => !images.includes(src)).forEach((src) => deleteImage(src));
     closeEditor();
     toast(isEdit ? '已保存修改' : '已收入收藏');
   } catch (err) {
@@ -3077,8 +3094,10 @@ async function saveEditor() {
 }
 
 function closeEditor() {
-  if (draft && draft.previewUrl && draft.previewUrl.startsWith('blob:')) {
-    URL.revokeObjectURL(draft.previewUrl);
+  if (draft && Array.isArray(draft.imageItems)) {
+    draft.imageItems.forEach((item) => {
+      if (item.file && item.src.startsWith('blob:')) URL.revokeObjectURL(item.src);
+    });
   }
   draft = null;
   $('#editorBackdrop').hidden = true;
